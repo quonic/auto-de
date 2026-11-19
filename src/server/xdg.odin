@@ -61,6 +61,7 @@ Popup :: struct {
 	positioner: Positioner,
 	x, y:       int, // relative to the parent's window geometry origin
 	mapped:     bool,
+	grab:       bool, // explicit grab: gets keyboard focus, dismissed by outside clicks
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +251,11 @@ xdg_surface_commit :: proc(x: ^Xdg_Surface) {
 			popup_send_configure(p)
 			return
 		}
+		was := p.mapped
 		p.mapped = x.surface.has_content && x.acked
+		if was != p.mapped {
+			update_keyboard_focus()
+		}
 	}
 }
 
@@ -358,12 +363,17 @@ popup_destroyed :: proc(obj: ^wl.Object) {
 		}
 	}
 	free(p)
+	if !obj.conn.closing {
+		update_keyboard_focus()
+	}
 	damage_all()
 }
 
 popup_requests := wl.Xdg_Popup_Requests {
 	destroy = proc(obj: ^wl.Object) {},
-	grab = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32) {},
+	grab = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32) {
+		(^Popup)(obj.data).grab = true
+	},
 	reposition = proc(obj: ^wl.Object, positioner: ^wl.Object, token: u32) {
 		p := (^Popup)(obj.data)
 		p.positioner = (^Positioner)(positioner.data)^

@@ -7,6 +7,7 @@ import "core:image"
 import "core:image/png"
 import "core:os"
 import "core:strings"
+import "core:sys/linux"
 import "autode:render"
 
 register_methods :: proc() {
@@ -15,6 +16,10 @@ register_methods :: proc() {
 	register_method("screenshot", method_screenshot)
 	register_method("launch", method_launch)
 	register_method("quit", method_quit)
+	register_method("processes", method_processes)
+	register_method("app_output", method_app_output)
+	register_method("kill", method_kill)
+	register_input_methods()
 }
 
 method_ping :: proc(req: ^Request) {
@@ -47,13 +52,24 @@ Window_Info :: struct {
 }
 
 State_Info :: struct {
-	display: string,
-	output:  struct {
+	display:   string,
+	output:    struct {
 		width:  int,
 		height: int,
 	},
-	frame:   u64,
-	windows: []Window_Info,
+	frame:     u64,
+	windows:   []Window_Info,
+	pointer:   struct {
+		x:         int,
+		y:         int,
+		window_id: u32, // window under / grabbed by the pointer, 0 = desktop
+		buttons:   int, // number of buttons held
+	},
+	keyboard:  struct {
+		window_id: u32, // window with keyboard focus, 0 = none
+		modifiers: []string,
+		keys_down: string,
+	},
 }
 
 window_info :: proc(w: ^Window, z: int) -> Window_Info {
@@ -87,6 +103,13 @@ method_get_state :: proc(req: ^Request) {
 	}
 	st.output.width = srv.width
 	st.output.height = srv.height
+	st.pointer.x = int(seat.px)
+	st.pointer.y = int(seat.py)
+	if w := window_of_surface(seat.pointer_focus); w != nil { st.pointer.window_id = w.id }
+	st.pointer.buttons = len(seat.buttons_down)
+	if w := window_of_surface(seat.kb_focus); w != nil { st.keyboard.window_id = w.id }
+	st.keyboard.modifiers = modifier_names()
+	st.keyboard.keys_down = key_list_string()
 	reply(req, st)
 }
 
@@ -219,4 +242,63 @@ method_launch :: proc(req: ^Request) {
 		return
 	}
 	reply(req, struct { pid: int }{pid})
+}
+
+// ---------------------------------------------------------------------------
+// processes / app_output / kill
+// ---------------------------------------------------------------------------
+
+method_processes :: proc(req: ^Request) {
+	Proc_Info :: struct {
+		pid:       int,
+		command:   []string,
+		running:   bool,
+		exit_code: int,
+	}
+	out := make([]Proc_Info, len(children), context.temp_allocator)
+	for c, i in children {
+		out[i] = {int(c.pid), c.command, !c.exited, c.exit_code}
+	}
+	reply(req, out)
+}
+
+// params: pid, stream?: "stdout"|"stderr" (default both: stdout then stderr), tail?: max bytes
+method_app_output :: proc(req: ^Request) {
+	pid, ok := param_int(req, "pid")
+	c := find_child(pid)
+	if !ok || c == nil {
+		reply_error(req, fmt.tprintf("unknown pid %d", pid))
+		return
+	}
+	pick :: proc(data: []u8, tail: int) -> string {
+		if tail > 0 && len(data) > tail {
+			return string(data[len(data) - tail:])
+		}
+		return string(data)
+	}
+	tail, _ := param_int(req, "tail")
+	Result :: struct {
+		stdout:    string,
+		stderr:    string,
+		running:   bool,
+		exit_code: int,
+	}
+	res := Result{running = !c.exited, exit_code = c.exit_code}
+	stream, _ := param_string(req, "stream")
+	if stream != "stderr" { res.stdout = pick(c.stdout.data[:], tail) }
+	if stream != "stdout" { res.stderr = pick(c.stderr.data[:], tail) }
+	reply(req, res)
+}
+
+method_kill :: proc(req: ^Request) {
+	pid, ok := param_int(req, "pid")
+	c := find_child(pid)
+	if !ok || c == nil {
+		reply_error(req, fmt.tprintf("unknown pid %d", pid))
+		return
+	}
+	if !c.exited {
+		linux.kill(-c.pid, .SIGTERM)
+	}
+	reply_ok(req)
 }

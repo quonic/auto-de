@@ -103,6 +103,9 @@ run :: proc(opts: Options) -> int {
 		return 1
 	}
 	register_globals()
+	if !seat_init() {
+		return 1
+	}
 	if !control_init() {
 		cleanup()
 		return 1

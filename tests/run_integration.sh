@@ -64,6 +64,30 @@ check_golden test_client_window
 echo "test: window screenshot size"
 ctl screenshot window_id=1 | grep -q '"width":320,"height":240\|"height":240' || fail "window screenshot"
 
+echo "test: pointer and keyboard input reach the client"
+CPID=$(ctl processes | grep -o '"pid":[0-9]*' | head -1 | cut -d: -f2)
+ctl mouse_click x=100 y=100 >/dev/null
+ctl scroll dy=1 >/dev/null
+ctl key combo=ctrl+a >/dev/null
+ctl type_text text='A!' >/dev/null
+sleep 0.3
+OUT=$(ctl app_output pid=$CPID stream=stdout)
+for expect in 'pointer_enter 68 68' 'button 272 pressed' 'button 272 released' 'axis 0 15' \
+		'key 29 pressed' 'modifiers 4 0' 'key 30 pressed' 'key 42 pressed' 'key 2 pressed'; do
+	grep -q "$expect" <<< "$OUT" || fail "client did not receive: $expect"
+done
+STATE=$(ctl get_state)
+grep -q '"keyboard":{[^}]*"window_id":1' <<< "$STATE" || fail "keyboard focus"
+
+echo "test: second window takes focus, click refocuses first"
+ctl launch "{\"command\":[\"$CLIENT\",\"--title\",\"Second\"]}" >/dev/null
+wait_for '"title":"Second"'
+sleep 0.2
+ctl get_state | grep -q '"id":2,[^}]*"focused":true\|"focused":true[^}]*"id":2' || fail "second window not focused"
+ctl mouse_click x=40 y=40 >/dev/null   # visible corner of window 1
+ctl get_state | grep -q '"keyboard":{[^}]*"window_id":1' || fail "click did not refocus window 1"
+check_golden two_windows_focus
+
 echo "test: quit"
 ctl quit >/dev/null
 wait "$SERVER_PID" || fail "server exit status"

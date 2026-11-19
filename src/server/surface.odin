@@ -65,6 +65,7 @@ region_requests := wl.Wl_Region_Requests {
 
 surface_destroyed :: proc(obj: ^wl.Object) {
 	s := surface_from(obj)
+	seat_surface_destroyed(s)
 	if s.xdg != nil {
 		s.xdg.surface = nil
 	}

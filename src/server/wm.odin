@@ -92,6 +92,7 @@ window_focus :: proc(w: ^Window) {
 			toplevel_send_configure(w)
 		}
 	}
+	update_keyboard_focus()
 	damage_all()
 }
 
@@ -117,6 +118,7 @@ srv_focus_lost :: proc() {
 			toplevel_send_configure(w)
 		}
 	}
+	keyboard_set_focus(nil)
 }
 
 window_set_maximized :: proc(w: ^Window, maximized: bool) {
@@ -184,6 +186,7 @@ on_frame_timer :: proc(w: ^Watch, events: linux.EPoll_Event_Set) {
 	buf: [8]u8
 	linux.read(w.fd, buf[:])
 	srv.frame_armed = false
+	pointer_refresh()
 	if srv.damaged {
 		srv.damaged = false
 		render_frame()

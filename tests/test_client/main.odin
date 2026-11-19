@@ -17,6 +17,7 @@ App :: struct {
 	compositor: ^wl.Object,
 	shm:        ^wl.Object,
 	wm_base:    ^wl.Object,
+	seat:       ^wl.Object,
 	surface:    ^wl.Object,
 	xdg:        ^wl.Object,
 	toplevel:   ^wl.Object,
@@ -44,10 +45,63 @@ registry_events := wl.Wl_Registry_Events {
 			app.compositor = wl.wl_registry_bind(obj, name, &wl.wl_compositor_interface, min(version, 4))
 		case "wl_shm":
 			app.shm = wl.wl_registry_bind(obj, name, &wl.wl_shm_interface, 1)
+		case "wl_seat":
+			app.seat = wl.wl_registry_bind(obj, name, &wl.wl_seat_interface, min(version, 7))
+			app.seat.handlers = &seat_events
 		case "xdg_wm_base":
 			app.wm_base = wl.wl_registry_bind(obj, name, &wl.xdg_wm_base_interface, min(version, 4))
 			app.wm_base.handlers = &wm_base_events
 		}
+	},
+}
+
+seat_events := wl.Wl_Seat_Events {
+	capabilities = proc(obj: ^wl.Object, caps: u32) {
+		if caps & u32(wl.Wl_Seat_Capability.pointer) != 0 {
+			p := wl.wl_seat_get_pointer(obj)
+			p.handlers = &pointer_events
+		}
+		if caps & u32(wl.Wl_Seat_Capability.keyboard) != 0 {
+			k := wl.wl_seat_get_keyboard(obj)
+			k.handlers = &keyboard_events
+		}
+	},
+}
+
+pointer_events := wl.Wl_Pointer_Events {
+	enter = proc(obj: ^wl.Object, serial: u32, surface: ^wl.Object, x, y: wl.Fixed) {
+		emit("pointer_enter %d %d", wl.fixed_to_int(x), wl.fixed_to_int(y))
+	},
+	leave = proc(obj: ^wl.Object, serial: u32, surface: ^wl.Object) {
+		emit("pointer_leave")
+	},
+	motion = proc(obj: ^wl.Object, time: u32, x, y: wl.Fixed) {
+		emit("motion %d %d", wl.fixed_to_int(x), wl.fixed_to_int(y))
+	},
+	button = proc(obj: ^wl.Object, serial: u32, time: u32, button: u32, state: u32) {
+		emit("button %d %s", button, state == 1 ? "pressed" : "released")
+	},
+	axis = proc(obj: ^wl.Object, time: u32, axis: u32, value: wl.Fixed) {
+		emit("axis %d %d", axis, wl.fixed_to_int(value))
+	},
+}
+
+keyboard_events := wl.Wl_Keyboard_Events {
+	keymap = proc(obj: ^wl.Object, format: u32, fd: linux.Fd, size: u32) {
+		emit("keymap %d %d", format, size)
+		linux.close(fd)
+	},
+	enter = proc(obj: ^wl.Object, serial: u32, surface: ^wl.Object, keys: []u8) {
+		emit("keyboard_enter")
+	},
+	leave = proc(obj: ^wl.Object, serial: u32, surface: ^wl.Object) {
+		emit("keyboard_leave")
+	},
+	key = proc(obj: ^wl.Object, serial: u32, time: u32, key: u32, state: u32) {
+		emit("key %d %s", key, state == 1 ? "pressed" : "released")
+	},
+	modifiers = proc(obj: ^wl.Object, serial: u32, depressed, latched, locked, group: u32) {
+		emit("modifiers %d %d", depressed, locked)
 	},
 }
 
