@@ -149,6 +149,28 @@ echo "test: clipboard"
 ctl clipboard_set text='hello clipboard' >/dev/null
 ctl clipboard_get | grep -q '"text":"hello clipboard"' || fail "clipboard round trip"
 
+echo "test: recording (y4m, and mp4 when ffmpeg is installed)"
+ctl record_start path="$WORK/rec.y4m" fps=20 window_id=1 >/dev/null || fail "record_start y4m"
+ctl mouse_move x=500 y=500 >/dev/null; sleep 0.3
+ctl record_stop | python3 -I -c "import json,sys; r=json.load(sys.stdin); sys.exit(0 if r['frames'] >= 3 else 1)" || fail "record_stop y4m"
+head -c 9 "$WORK/rec.y4m" | grep -q YUV4MPEG2 || fail "y4m header"
+if command -v ffmpeg >/dev/null; then
+	ctl record_start path="$WORK/rec.mp4" fps=30 >/dev/null || fail "record_start mp4"
+	sleep 0.4
+	ctl record_stop | grep -q '"dropped":0' || fail "record_stop mp4"
+	[[ -s $WORK/rec.mp4 ]] || fail "mp4 is empty"
+fi
+
+echo "test: nested session inside this one"
+WAYLAND_DISPLAY=autode-0 "$AUTODE" run --size 320x240 --interactive --quiet --clock 09:30 > "$WORK/nested.out" 2> "$WORK/nested.log" &
+NESTED_PID=$!
+ctl wait_for_window title="Auto DE (autode-1, interactive)" match=exact timeout_ms=5000 >/dev/null || fail "nested window"
+NWIN=$(ctl get_state | python3 -I -c "import json,sys; print([w['id'] for w in json.load(sys.stdin)['windows'] if w['app_id']=='autode'][0])")
+ctl mouse_click target=window.$NWIN >/dev/null   # forwarded into the nested session
+AUTODE_CTL=$XDG_RUNTIME_DIR/autode-1.ctl "$AUTODE" ctl get_state | grep -q '"buttons":0' || fail "nested session state"
+AUTODE_CTL=$XDG_RUNTIME_DIR/autode-1.ctl "$AUTODE" ctl quit >/dev/null
+wait "$NESTED_PID" || fail "nested exit"
+
 echo "test: quit"
 ctl quit >/dev/null
 wait "$SERVER_PID" || fail "server exit status"

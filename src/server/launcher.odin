@@ -257,14 +257,13 @@ reap_children :: proc() {
 		if err != .NONE || pid <= 0 {
 			return
 		}
+		code := status & 0x7f == 0 ? int((status >> 8) & 0xff) : -int(status & 0x7f)
 		if c := find_child(int(pid)); c != nil {
 			c.exited = true
-			if status & 0x7f == 0 {
-				c.exit_code = int((status >> 8) & 0xff)
-			} else {
-				c.exit_code = -int(status & 0x7f)
-			}
+			c.exit_code = code
 			log("pid %d exited (%d)", pid, c.exit_code)
+		} else {
+			record_child_exited(pid, code)
 		}
 	}
 }

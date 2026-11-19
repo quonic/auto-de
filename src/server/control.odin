@@ -139,6 +139,7 @@ ctl_client_destroy :: proc(cc: ^Ctl_Client) {
 	jobs_client_gone(cc)
 	clipboard_client_gone(cc)
 	waits_client_gone(cc)
+	record_client_gone(cc)
 	loop_remove(&srv.loop, &cc.watch)
 	linux.close(cc.watch.fd)
 	for x, i in srv.control.clients {

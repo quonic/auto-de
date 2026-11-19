@@ -8,15 +8,17 @@ import "core:strings"
 import "autode:server"
 
 USAGE :: `usage:
-  autode run [--size WxH] [--config FILE] [--clock HH:MM] [--debug] [--quiet] [-- command args...]
-      Start a headless session. Prints "AUTODE_READY display=... control=..." when ready.
+  autode run [--size WxH] [--config FILE] [--clock HH:MM] [--nested | --interactive] [--debug] [--quiet] [-- command args...]
+      Start a session (headless by default). Prints "AUTODE_READY display=... control=..." when ready.
+      --nested        also show the session in a window on your desktop (view only)
+      --interactive   like --nested, and forward your mouse/keyboard into the session
       --config FILE   INI file with [session] clock= and [app.*] name=/exec= start menu entries
       --clock HH:MM   freeze the taskbar clock (for deterministic screenshots)
       --isolate-home  launch apps with a fresh empty HOME (no personal settings/data)
   autode ctl [--socket PATH] [--out FILE] <method> [{json params} | key=value ...]
       Send one control request and print the JSON response.
       --out FILE writes a screenshot's PNG to FILE instead of printing base64.
-  autode mcp [--attach CTL_SOCKET] [--size WxH] [--config FILE] [--clock HH:MM] [--isolate-home]
+  autode mcp [--attach CTL_SOCKET] [--size WxH] [--config FILE] [--clock HH:MM] [--isolate-home] [--nested]
       MCP server on stdio for AI agents. Starts its own headless session unless --attach is given.
 `
 
@@ -57,6 +59,11 @@ cmd_run :: proc(args: []string) -> int {
 			opts.quiet = true
 		case a == "--isolate-home":
 			opts.isolate_home = true
+		case a == "--nested":
+			opts.nested = true
+		case a == "--interactive":
+			opts.nested = true
+			opts.interactive = true
 		case a == "--clock" && i + 1 < len(args):
 			i += 1
 			opts.clock = args[i]

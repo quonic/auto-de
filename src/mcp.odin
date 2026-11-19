@@ -117,7 +117,7 @@ cmd_mcp :: proc(args: []string) -> int {
 		case (a == "--size" || a == "--config" || a == "--clock") && i + 1 < len(args):
 			append(&run_args, a, args[i + 1])
 			i += 1
-		case a == "--isolate-home":
+		case a == "--isolate-home" || a == "--nested":
 			append(&run_args, a)
 		case:
 			fmt.eprintfln("autode mcp: unknown option %q", a)

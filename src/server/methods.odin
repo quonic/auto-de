@@ -22,6 +22,7 @@ register_methods :: proc() {
 	register_input_methods()
 	register_window_methods()
 	register_wait_methods()
+	register_record_methods()
 }
 
 method_ping :: proc(req: ^Request) {

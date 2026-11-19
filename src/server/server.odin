@@ -17,6 +17,8 @@ Options :: struct {
 	apps:    []App_Entry, // start menu entries
 	clock:   string, // fixed clock text ("" = real time)
 	isolate_home: bool, // launch every app with a fresh, empty HOME
+	nested:      bool, // show the session in a window on the host desktop
+	interactive: bool, // nested: forward host input into the session
 }
 
 Global :: struct {
@@ -114,6 +116,10 @@ run :: proc(opts: Options) -> int {
 		cleanup()
 		return 1
 	}
+	if opts.nested && !nested_init(opts.interactive) {
+		cleanup()
+		return 1
+	}
 
 	log("display %s  control %s  output %dx%d", srv.display_name, srv.control.path, srv.width, srv.height)
 	// Machine-readable line for wrappers (autode mcp, test scripts).
@@ -147,12 +153,14 @@ after_dispatch :: proc() {
 	}
 	control_flush_all()
 	reap_children()
+	nested_tick()
 }
 
 cleanup :: proc() {
 	for len(srv.clients) > 0 {
 		client_destroy(srv.clients[len(srv.clients) - 1])
 	}
+	record_abort()
 	control_shutdown()
 	if srv.socket_path != "" {
 		linux.unlink(strings.clone_to_cstring(srv.socket_path, context.temp_allocator))
@@ -229,7 +237,7 @@ SIGNALFD_INFO_SIZE :: 128
 
 setup_signals :: proc() -> bool {
 	mask: linux.Sig_Set
-	for sig in ([]linux.Signal{.SIGINT, .SIGTERM, .SIGHUP}) {
+	for sig in ([]linux.Signal{.SIGINT, .SIGTERM, .SIGHUP, .SIGCHLD}) {
 		bit := uint(sig) - 1
 		mask[bit / (8 * size_of(uint))] |= 1 << (bit % (8 * size_of(uint)))
 	}
@@ -248,9 +256,19 @@ setup_signals :: proc() -> bool {
 	srv.signal_watch = Watch {
 		fd = linux.Fd(ret),
 		callback = proc(w: ^Watch, events: linux.EPoll_Event_Set) {
-			info: [SIGNALFD_INFO_SIZE]u8
-			linux.read(w.fd, info[:])
-			srv.quit = true
+			for {
+				info: [SIGNALFD_INFO_SIZE]u8
+				n, err := linux.read(w.fd, info[:])
+				if err != .NONE || n < SIGNALFD_INFO_SIZE {
+					return
+				}
+				signo := (^u32)(&info[0])^ // signalfd_siginfo.ssi_signo
+				if signo == u32(linux.Signal.SIGCHLD) {
+					reap_children() // also runs after every dispatch
+				} else {
+					srv.quit = true
+				}
+			}
 		},
 	}
 	return loop_add(&srv.loop, &srv.signal_watch, {.IN})
