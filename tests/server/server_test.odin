@@ -64,3 +64,39 @@ command_splitting :: proc(t: ^testing.T) {
 		testing.expect_value(t, parts[4], "a b")
 	}
 }
+
+@(test)
+blink_classification :: proc(t: ^testing.T) {
+	s: server.Surface
+	caret := render.Rect{40, 30, 2, 16}
+	A, B :: u64(111), u64(222)
+	server.srv.last_activity_ns = 0
+	start := server.srv.blinks_ignored
+
+	// A -> B: first half of a toggle still counts as activity.
+	server.classify_change(&s, {changed = caret, before = A, after = B})
+	testing.expect(t, server.srv.last_activity_ns != 0)
+	testing.expect_value(t, server.srv.blinks_ignored, start)
+
+	// B -> A, A -> B, ...: recognised as blinks, no activity.
+	server.srv.last_activity_ns = 0
+	server.classify_change(&s, {changed = caret, before = B, after = A})
+	server.classify_change(&s, {changed = caret, before = A, after = B})
+	testing.expect_value(t, server.srv.last_activity_ns, i64(0))
+	testing.expect_value(t, server.srv.blinks_ignored, start + 2)
+
+	// Identical frame: nothing.
+	server.classify_change(&s, {})
+	testing.expect_value(t, server.srv.last_activity_ns, i64(0))
+
+	// A third state in the same place (spinner) is activity.
+	server.classify_change(&s, {changed = caret, before = B, after = 333})
+	testing.expect(t, server.srv.last_activity_ns != 0)
+
+	// A large toggle is never a blink.
+	server.srv.last_activity_ns = 0
+	big := render.Rect{0, 0, 200, 100}
+	server.classify_change(&s, {changed = big, before = A, after = B})
+	server.classify_change(&s, {changed = big, before = B, after = A})
+	testing.expect(t, server.srv.last_activity_ns != 0)
+}

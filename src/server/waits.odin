@@ -4,7 +4,8 @@ package server
 // session reaches some state, or time out.
 //
 //   wait_for_window  {title?, app_id?, match?: "contains"|"exact"|"regex", timeout_ms?}
-//   wait_for_idle    {quiet_ms?, timeout_ms?}          no client commits for quiet_ms
+//   wait_for_idle    {quiet_ms?, strict?, timeout_ms?} no meaningful redraws for quiet_ms
+//                    (identical frames and blinking carets are ignored unless strict)
 //   wait_for_change  {region? | window_id?, timeout_ms?} pixels differ from now
 //   wait_for_stable  {region? | window_id?, quiet_ms?, timeout_ms?} pixels unchanged for quiet_ms
 
@@ -43,6 +44,8 @@ Waiter :: struct {
 	has_title_re, has_app_re: bool,
 	// idle / stable
 	quiet_ns:    i64,
+	strict:      bool, // idle: any commit counts, even identical frames and caret blinks
+	blinks_at_start: u64,
 	// change / stable
 	region:      render.Rect,
 	window_id:   u32,
@@ -166,6 +169,8 @@ method_wait_simple :: proc(req: ^Request) {
 		quiet = 500
 	}
 	w.quiet_ns = i64(quiet) * 1_000_000
+	w.strict, _ = param_bool(req, "strict")
+	w.blinks_at_start = srv.blinks_ignored
 	w.region = render.image_rect(&srv.fb)
 	if id, ok := param_int(req, "window_id"); ok {
 		win := find_window(u32(id))
@@ -252,9 +257,10 @@ waiter_check :: proc(w: ^Waiter, now: i64) -> (string, bool) {
 			return data, true
 		}
 	case .Idle:
-		quiet := now - srv.last_commit_ns
+		last := w.strict ? srv.last_commit_ns : srv.last_activity_ns
+		quiet := now - last
 		if quiet >= w.quiet_ns && !srv.damaged && len(jobs) == 0 {
-			return fmt.tprintf(`{{"idle_ms":%d}}`, quiet / 1_000_000), true
+			return fmt.tprintf(`{{"idle_ms":%d,"blinks_ignored":%d}}`, quiet / 1_000_000, srv.blinks_ignored - w.blinks_at_start), true
 		}
 	case .Change:
 		ensure_rendered()

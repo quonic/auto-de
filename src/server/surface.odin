@@ -29,6 +29,8 @@ Surface :: struct {
 
 	role:         Role,
 	xdg:          ^Xdg_Surface,
+	changes:      [BLINK_HISTORY]Change_Record, // recent small content changes
+	change_pos:   int,
 	sub:          ^Subsurface, // role Subsurface
 	stack:        [dynamic]^Surface, // self + subsurfaces, bottom to top (empty = no children)
 
@@ -142,10 +144,17 @@ surface_requests := wl.Wl_Surface_Requests {
 surface_commit :: proc(s: ^Surface) {
 	if s.p_attached {
 		if s.p_buffer == nil {
+			if s.has_content {
+				note_activity(s)
+			}
 			s.has_content = false
 			render.image_destroy(&s.texture)
-		} else if buffer_copy_to_image(s.p_buffer, &s.texture) {
+		} else if diff, ok := buffer_copy_to_image(s.p_buffer, &s.texture); ok {
+			if !s.has_content {
+				diff.reset = true
+			}
 			s.has_content = true
+			classify_change(s, diff)
 			// We keep our own copy, so the client can reuse the buffer right away.
 			wl.wl_buffer_send_release(s.p_buffer.obj)
 		} else {
@@ -155,6 +164,9 @@ surface_commit :: proc(s: ^Surface) {
 		s.p_buffer = nil
 	}
 	if s.p_scale > 0 {
+		if s.p_scale != s.scale {
+			note_activity(s)
+		}
 		s.scale = s.p_scale
 		s.p_scale = 0
 	}
@@ -163,6 +175,7 @@ surface_commit :: proc(s: ^Surface) {
 		s.vp_dst_w = s.p_vp_dst_w
 		s.vp_dst_h = s.p_vp_dst_h
 		s.p_vp_changed = false
+		note_activity(s)
 	}
 	subsurfaces_parent_committed(s)
 	append(&s.frames, ..s.p_frames[:])
@@ -347,47 +360,113 @@ buffer_destroyed :: proc(obj: ^wl.Object) {
 
 // Copy a client buffer into `img` (premultiplied ARGB). Returns false after
 // posting a protocol error.
-buffer_copy_to_image :: proc(b: ^Buffer, img: ^render.Image) -> bool {
+// What a commit changed in a surface's pixels.
+Content_Diff :: struct {
+	reset:   bool,        // size/format changed or first content: everything is new
+	changed: render.Rect, // bounding box of changed pixels (empty = identical)
+	before:  u64,         // hash of `changed` before the commit
+	after:   u64,         // hash of `changed` after the commit
+}
+
+buffer_copy_to_image :: proc(b: ^Buffer, img: ^render.Image) -> (Content_Diff, bool) {
 	switch b.kind {
 	case .Single_Pixel:
+		diff: Content_Diff
+		if img.width != 1 || img.height != 1 || img.pixels[0] != b.color {
+			diff.reset = true
+		}
 		render.image_resize(img, 1, 1)
 		img.pixels[0] = b.color
 		img.alpha = b.color >> 24 != 0xff
-		return true
+		return diff, true
 	case .Shm:
 		p := b.pool
 		// Guard against a client truncating the file under us (would SIGBUS).
 		st: linux.Stat
 		if linux.fstat(p.fd, &st) != .NONE || int(st.size) < b.offset + b.stride * b.height {
 			wl.post_error(b.obj, u32(wl.Wl_Shm_Error.invalid_fd), "shm pool file is smaller than the buffer")
-			return false
+			return {}, false
 		}
-		copy_pixels(p.data, b, img)
-		return true
+		return copy_pixels(p.data, b, img), true
 	case .Dmabuf:
 		dmabuf_sync(b, true)
-		copy_pixels(b.dmabuf_map, b, img)
+		diff := copy_pixels(b.dmabuf_map, b, img)
 		dmabuf_sync(b, false)
-		return true
+		return diff, true
 	}
-	return false
+	return {}, false
 }
 
-// Copy a 32-bit RGB buffer into a premultiplied ARGB image.
-copy_pixels :: proc(base: [^]u8, b: ^Buffer, img: ^render.Image) {
-	render.image_resize(img, b.width, b.height)
+// Copy a 32-bit RGB buffer into a premultiplied ARGB image and report which
+// pixels changed. Only the changed rectangle is rewritten.
+copy_pixels :: proc(base: [^]u8, b: ^Buffer, img: ^render.Image) -> (diff: Content_Diff) {
 	// wl_shm argb8888/xrgb8888 (0, 1) are the same layouts as DRM AR24/XR24.
 	swap_rb := b.format == DRM_FORMAT_ABGR8888 || b.format == DRM_FORMAT_XBGR8888
-	img.alpha = b.format == u32(wl.Wl_Shm_Format.argb8888) || b.format == DRM_FORMAT_ARGB8888 || b.format == DRM_FORMAT_ABGR8888
-	for y in 0 ..< b.height {
-		src := ([^]u32)(&base[b.offset + y * b.stride])[:b.width]
-		dst := img.pixels[y * b.width:][:b.width]
-		if swap_rb {
-			for v, i in src {
-				dst[i] = (v & 0xff00ff00) | (v & 0xff) << 16 | (v >> 16) & 0xff
+	alpha := b.format == u32(wl.Wl_Shm_Format.argb8888) || b.format == DRM_FORMAT_ARGB8888 || b.format == DRM_FORMAT_ABGR8888
+	// Opaque formats: force the X byte so junk in it never counts as a change.
+	fill: u32 = alpha ? 0 : 0xff000000
+	convert :: #force_inline proc "contextless" (v: u32, swap_rb: bool, fill: u32) -> u32 {
+		p := swap_rb ? (v & 0xff00ff00) | (v & 0xff) << 16 | (v >> 16) & 0xff : v
+		return p | fill
+	}
+	src_row :: #force_inline proc(base: [^]u8, b: ^Buffer, y: int) -> []u32 {
+		return ([^]u32)(&base[b.offset + y * b.stride])[:b.width]
+	}
+
+	if img.width != b.width || img.height != b.height || img.pixels == nil || img.alpha != alpha {
+		render.image_resize(img, b.width, b.height)
+		img.alpha = alpha
+		for y in 0 ..< b.height {
+			dst := img.pixels[y * b.width:][:b.width]
+			for v, i in src_row(base, b, y) {
+				dst[i] = convert(v, swap_rb, fill)
 			}
-		} else {
-			copy(dst, src)
+		}
+		diff.reset = true
+		return
+	}
+
+	// Pass 1: bounding box of changed pixels.
+	x0, y0, x1, y1 := b.width, b.height, -1, -1
+	for y in 0 ..< b.height {
+		src := src_row(base, b, y)
+		dst := img.pixels[y * b.width:][:b.width]
+		row_changed := false
+		for v, i in src {
+			if convert(v, swap_rb, fill) != dst[i] {
+				x0 = min(x0, i)
+				x1 = max(x1, i)
+				row_changed = true
+			}
+		}
+		if row_changed {
+			y0 = min(y0, y)
+			y1 = max(y1, y)
 		}
 	}
+	if y1 < 0 {
+		return // identical content
+	}
+	diff.changed = {x0, y0, x1 - x0 + 1, y1 - y0 + 1}
+	diff.before = hash_rect(img, diff.changed)
+	// Pass 2: rewrite only the changed rectangle.
+	for y in y0 ..= y1 {
+		src := src_row(base, b, y)
+		dst := img.pixels[y * b.width:][:b.width]
+		for i in x0 ..= x1 {
+			dst[i] = convert(src[i], swap_rb, fill)
+		}
+	}
+	diff.after = hash_rect(img, diff.changed)
+	return
+}
+
+hash_rect :: proc(img: ^render.Image, r: render.Rect) -> u64 {
+	h: u64 = 0xcbf29ce484222325
+	for y in r.y ..< r.y + r.h {
+		for p in img.pixels[y * img.width + r.x:][:r.w] {
+			h = (h ~ u64(p)) * 0x100000001b3
+		}
+	}
+	return h
 }

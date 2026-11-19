@@ -54,7 +54,9 @@ Server :: struct {
 	fb:             render.Image,
 	damaged:        bool,
 	frame_count:    u64,
-	last_commit_ns: i64,
+	last_commit_ns: i64,   // any commit
+	last_activity_ns: i64, // last commit that changed pixels meaningfully (see activity.odin)
+	blinks_ignored: u64,   // caret-blink style toggles seen (not counted as activity)
 
 	surfaces:       [dynamic]^Surface,
 	windows:        [dynamic]^Window, // stacking order, bottom first

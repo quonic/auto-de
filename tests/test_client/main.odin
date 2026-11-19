@@ -10,6 +10,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
+import "core:time"
 import wl "autode:wl"
 
 App :: struct {
@@ -25,6 +26,12 @@ App :: struct {
 	spb:        ^wl.Object,
 	with_sub:   bool,
 	sub_done:   bool,
+	blink_ms:   int,  // --blink: toggle a text caret every N ms (identical frames in between)
+	animate:    bool, // --animate: move a full-height bar every frame
+	caret_on:   bool,
+	last_toggle: time.Tick,
+	frame_no:   int,
+	anim_x:     int,
 	surface:    ^wl.Object,
 	xdg:        ^wl.Object,
 	toplevel:   ^wl.Object,
@@ -179,6 +186,8 @@ draw :: proc(w, h: int) {
 			c: u32
 			switch {
 			case x < 4 || y < 4 || x >= w - 4 || y >= h - 4: c = 0xff000000
+			case app.caret_on && x >= 40 && x < 42 && y >= 30 && y < 46: c = 0xff000000
+			case app.animate && x >= app.anim_x && x < app.anim_x + 20: c = 0xffffff00
 			case x < w / 2 && y < h / 2: c = 0xffff0000
 			case x >= w / 2 && y < h / 2: c = 0xff00ff00
 			case x < w / 2: c = 0xff0000ff
@@ -195,10 +204,11 @@ draw :: proc(w, h: int) {
 	buffer.handlers = &buffer_events
 	wl.wl_surface_attach(app.surface, buffer, 0, 0)
 	wl.wl_surface_damage_buffer(app.surface, 0, 0, i32(w), i32(h))
+	request_frame()
 	wl.wl_surface_commit(app.surface)
 	app.drawn_w = w
 	app.drawn_h = h
-	emit("drawn %d %d", w, h)
+	if app.frame_no == 0 { emit("drawn %d %d", w, h) }
 	if app.with_sub && !app.sub_done {
 		app.sub_done = true
 		add_subsurfaces()
@@ -251,6 +261,37 @@ add_subsurfaces :: proc() {
 	emit("subsurfaces")
 }
 
+// Frame loop for --blink / --animate.
+request_frame :: proc() {
+	if app.blink_ms > 0 || app.animate {
+		cb := wl.wl_surface_frame(app.surface)
+		cb.handlers = &frame_events
+	}
+}
+
+frame_events := wl.Wl_Callback_Events {
+	done = proc(obj: ^wl.Object, t: u32) {
+		app.frame_no += 1
+		if app.animate {
+			app.anim_x = (app.anim_x + 4) % max(app.drawn_w - 20, 1)
+			draw(app.drawn_w, app.drawn_h)
+			return
+		}
+		if time.duration_milliseconds(time.tick_since(app.last_toggle)) >= f64(app.blink_ms) {
+			app.caret_on = !app.caret_on
+			app.last_toggle = time.tick_now()
+			draw(app.drawn_w, app.drawn_h)
+			return
+		}
+		if app.frame_no % 5 == 0 {
+			draw(app.drawn_w, app.drawn_h) // identical content, like apps that repaint anyway
+			return
+		}
+		request_frame()
+		wl.wl_surface_commit(app.surface)
+	},
+}
+
 buffer_events := wl.Wl_Buffer_Events {
 	release = proc(obj: ^wl.Object) {
 		wl.wl_buffer_destroy(obj)
@@ -271,6 +312,11 @@ main :: proc() {
 				app.width, _ = strconv.parse_int(parts[0])
 				app.height, _ = strconv.parse_int(parts[1])
 			}
+		case args[i] == "--blink" && i + 1 < len(args):
+			i += 1
+			app.blink_ms, _ = strconv.parse_int(args[i])
+		case args[i] == "--animate":
+			app.animate = true
 		case args[i] == "--subsurface":
 			app.with_sub = true
 		case args[i] == "--csd":

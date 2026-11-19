@@ -17,8 +17,12 @@ Tested on Fedora 45 (AMD GPU, Mesa radeonsi) with `autode run` headless.
 - **GPU buffers must be LINEAR.** Only linear dmabufs are accepted (they are mapped and copied by
   the CPU). Drivers that cannot render to linear buffers fall back to software rendering; set
   `LIBGL_ALWAYS_SOFTWARE=1` in `launch` env if an app fails to start.
-- **`wait_for_idle` and blinking carets.** Apps with a blinking text cursor commit every ~500 ms,
-  so `quiet_ms` must be shorter than that (or use `wait_for_stable` on a region without a caret).
+- **`wait_for_idle` and blinking carets.** Identical repaints and blinking carets (a small region,
+  at most 64x64, toggling between exactly two states) are ignored, so `wait_for_idle` settles on
+  Firefox, KWrite, kitty, GTK entries. The first blink after the caret appears or moves can't be
+  told apart from a real change yet, so idle may take one extra blink period. Spinners and
+  animations (more than two states) still count as activity. `strict=true` restores "any commit".
+  `wait_for_stable` compares screen pixels and still sees carets: give it a region without one.
 - **Synchronized subsurfaces** are applied immediately instead of with the parent commit
   (positions do wait for the parent). This can show a torn intermediate frame, never a wrong final one.
 - **No Xwayland**: X11-only apps don't run. Most toolkits pick Wayland automatically because

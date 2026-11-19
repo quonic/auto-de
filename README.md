@@ -63,7 +63,7 @@ claude mcp add autode -- /path/to/build/autode mcp --size 1280x800
 | Keyboard | `key {combo}`, `key_down {key}`, `key_up {key}`, `type_text {text, delay_ms?}`, `release_all` |
 | Windows | `focus`, `close`, `minimize`, `maximize`, `restore`, `move {x,y}`, `resize {width,height}` (all take `window_id`) |
 | Apps | `launch {command, env?, cwd?, isolate_home?}`, `processes`, `app_output {pid, tail?, stream?}`, `kill {pid}` |
-| Sync | `wait_for_window {title?, app_id?, match?}`, `wait_for_idle {quiet_ms?}`, `wait_for_change {region?/window_id?}`, `wait_for_stable {quiet_ms?}` — all take `timeout_ms` |
+| Sync | `wait_for_window {title?, app_id?, match?}`, `wait_for_idle {quiet_ms?, strict?}` (ignores identical repaints and blinking carets), `wait_for_change {region?/window_id?}`, `wait_for_stable {quiet_ms?}` — all take `timeout_ms` |
 | Desktop | `start_menu {open?}`, `set_clock {text}`, `clipboard_get`, `clipboard_set {text}`, `ping`, `quit` |
 | Recording | `record_start {path, fps?, window_id?, region?, include_cursor?}`, `record_stop` |
 

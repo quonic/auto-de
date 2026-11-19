@@ -149,6 +149,22 @@ echo "test: clipboard"
 ctl clipboard_set text='hello clipboard' >/dev/null
 ctl clipboard_get | grep -q '"text":"hello clipboard"' || fail "clipboard round trip"
 
+echo "test: wait_for_idle ignores blinking carets, not animations"
+ctl launch "{\"command\":[\"$CLIENT\",\"--blink\",\"150\",\"--title\",\"Blink\",\"--size\",\"120x80\"]}" >/dev/null
+ctl wait_for_window title=Blink >/dev/null || fail "blink window"
+# Default first: its wait window must contain (and ignore) at least one blink.
+ctl wait_for_idle quiet_ms=400 timeout_ms=3000 | python3 -I -c "import json,sys; r=json.load(sys.stdin); sys.exit(0 if r['blinks_ignored'] >= 1 else 1)" \
+	|| fail "idle with a blinking caret"
+ctl wait_for_idle quiet_ms=400 strict=true timeout_ms=1000 >/dev/null 2>&1 && fail "strict idle should see the blinking caret"
+ctl launch "{\"command\":[\"$CLIENT\",\"--animate\",\"--title\",\"Anim\",\"--size\",\"120x80\"]}" >/dev/null
+ctl wait_for_window title=Anim >/dev/null || fail "anim window"
+ctl wait_for_idle quiet_ms=400 timeout_ms=1000 >/dev/null 2>&1 && fail "animation must block idle"
+for t in Blink Anim; do
+	ID=$(ctl get_state | python3 -I -c "import json,sys; print([w['id'] for w in json.load(sys.stdin)['windows'] if w['title']=='$t'][0])")
+	ctl close window_id=$ID >/dev/null
+done
+ctl wait_for_idle quiet_ms=300 timeout_ms=3000 >/dev/null || fail "idle after closing"
+
 echo "test: subsurfaces, viewporter, single-pixel buffers"
 ctl launch "{\"command\":[\"$CLIENT\",\"--subsurface\",\"--title\",\"Subsurfaces\",\"--size\",\"200x150\"]}" >/dev/null
 ctl wait_for_window title=Subsurfaces >/dev/null || fail "subsurface window"
