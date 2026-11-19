@@ -28,13 +28,13 @@ gen() {
 build() {
 	mkdir -p build
 	"$ODIN" check src/wl -no-entry-point "${FLAGS[@]}"
-	if [[ -f src/main.odin ]]; then
-		"$ODIN" build src -out:build/autode "${FLAGS[@]}" -debug
-	fi
+	"$ODIN" build src -out:build/autode "${FLAGS[@]}" -debug
+	"$ODIN" build tests/test_client -out:build/test_client "${FLAGS[@]}" -debug
 }
 
 test() {
 	"$ODIN" test tests/wl "${FLAGS[@]}"
+	tests/run_integration.sh
 }
 
 case "${1:-build}" in

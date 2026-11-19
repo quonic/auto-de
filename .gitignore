@@ -1,4 +1,4 @@
 build/
-*.png
-*.mp4
-*.y4m
+/*.png
+/*.mp4
+/*.y4m

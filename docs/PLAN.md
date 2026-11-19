@@ -60,18 +60,16 @@ assets/
   font/                      # public-domain bitmap font (X11 misc-fixed 6x13 + bold), BDF → .odin via tools/fontgen
   keymap_us.xkb              # static XKB v1 text keymap, sent to clients via memfd
 src/
-  main.odin                  # subcommand dispatch
-  wl/        wire.odin connection.odin object_map.odin  + generated/*.odin (server and client side)
-  compositor/ display.odin client.odin surface.odin region.odin subsurface.odin shm.odin dmabuf.odin
-              xdg_shell.odin positioner.odin seat.odin keyboard.odin pointer.odin output.odin
-              data_device.odin decoration.odin viewporter.odin cursor_shape.odin single_pixel.odin
-  render/    framebuffer.odin blit.odin damage.odin font.odin widgets.odin cursor_images.odin
-  de/        wm.odin decorations.odin taskbar.odin start_menu.odin theme.odin layout.odin
-  backend/   headless.odin nested.odin
-  automation/ control_server.odin methods.odin input_inject.odin screenshot.odin recorder.odin
-              waits.odin launcher.odin clipboard.odin
-  mcp/       mcp.odin tools.odin             # JSON-RPC 2.0 over stdio, proxies to control socket
-  util/      event_loop.odin json_rpc.odin
+  main.odin ctl.odin         # package main: subcommands (run, ctl, later mcp)
+  wl/                        # wire protocol runtime + generated proto_*.odin (server and client side)
+  render/                    # pure pixel ops: images, blending, (later) font + bevel widgets
+  server/                    # compositor + DE + automation in ONE package (Odin forbids import
+                             # cycles and these parts reference each other constantly).
+                             # Files are grouped by prefix/topic: server.odin (loop, clients, globals),
+                             # surface.odin (surfaces, shm), xdg.odin (xdg-shell), wm.odin (window
+                             # management, frame timer, compositing), control.odin + methods.odin
+                             # (control socket API), launcher.odin (app processes + output capture)
+  mcp/                       # (milestone 6) MCP stdio server proxying to the control socket
 tests/       unit (odin test) + integration (golden screenshots)
   test_client/                               # tiny Odin Wayland client built on src/wl (client side)
 ```
