@@ -20,6 +20,7 @@ register_methods :: proc() {
 	register_method("app_output", method_app_output)
 	register_method("kill", method_kill)
 	register_input_methods()
+	register_window_methods()
 }
 
 method_ping :: proc(req: ^Request) {
@@ -35,16 +36,29 @@ method_quit :: proc(req: ^Request) {
 // get_state
 // ---------------------------------------------------------------------------
 
+Rect_Info :: struct {
+	x:      int,
+	y:      int,
+	width:  int,
+	height: int,
+}
+
+to_rect_info :: proc(r: render.Rect) -> Rect_Info {
+	return {r.x, r.y, r.w, r.h}
+}
+
 Window_Info :: struct {
-	id:        u32,
-	title:     string,
-	app_id:    string,
-	pid:       i32,
-	x:         int,
-	y:         int,
-	width:     int,
-	height:    int,
-	mapped:    bool,
+	id:          u32,
+	title:       string,
+	app_id:      string,
+	pid:         i32,
+	x:           int, // outer frame (what you see on screen)
+	y:           int,
+	width:       int,
+	height:      int,
+	content:     Rect_Info, // client area
+	decorations: string, // "server" (our title bar) or "client"
+	mapped:      bool,
 	focused:   bool,
 	minimized: bool,
 	maximized: bool,
@@ -59,6 +73,9 @@ State_Info :: struct {
 	},
 	frame:     u64,
 	windows:   []Window_Info,
+	elements:  []Element_Info,
+	start_menu_open: bool,
+	clock:     string,
 	pointer:   struct {
 		x:         int,
 		y:         int,
@@ -73,17 +90,19 @@ State_Info :: struct {
 }
 
 window_info :: proc(w: ^Window, z: int) -> Window_Info {
-	g := w.xdg != nil ? xdg_geometry(w.xdg) : {}
+	f := window_frame_rect(w)
 	return Window_Info {
-		id        = w.id,
-		title     = w.title,
-		app_id    = w.app_id,
-		pid       = w.client.pid,
-		x         = w.x,
-		y         = w.y,
-		width     = g.w,
-		height    = g.h,
-		mapped    = w.mapped,
+		id          = w.id,
+		title       = w.title,
+		app_id      = w.app_id,
+		pid         = w.client.pid,
+		x           = f.x,
+		y           = f.y,
+		width       = f.w,
+		height      = f.h,
+		content     = to_rect_info(window_content_rect(w)),
+		decorations = w.ssd ? "server" : "client",
+		mapped      = w.mapped,
 		focused   = w.activated,
 		minimized = w.minimized,
 		maximized = w.maximized,
@@ -103,6 +122,9 @@ method_get_state :: proc(req: ^Request) {
 	}
 	st.output.width = srv.width
 	st.output.height = srv.height
+	st.elements = element_infos()
+	st.start_menu_open = shell.start_open
+	st.clock = shell.clock_text
 	st.pointer.x = int(seat.px)
 	st.pointer.y = int(seat.py)
 	if w := window_of_surface(seat.pointer_focus); w != nil { st.pointer.window_id = w.id }
@@ -137,8 +159,7 @@ method_screenshot :: proc(req: ^Request) {
 			reply_error(req, fmt.tprintf("no mapped window %d", id))
 			return
 		}
-		g := xdg_geometry(w.xdg)
-		area = {w.x, w.y, g.w, g.h}
+		area = window_frame_rect(w)
 	}
 	if region, ok := param_object(req, "region"); ok {
 		get :: proc(o: json.Object, k: string) -> int {
@@ -157,6 +178,9 @@ method_screenshot :: proc(req: ^Request) {
 	}
 
 	img := render.crop(&srv.fb, area, context.temp_allocator)
+	if inc, _ := param_bool(req, "include_cursor"); inc {
+		draw_cursor(&img, int(seat.px) - area.x, int(seat.py) - area.y)
+	}
 	scale, has_scale := param_f64(req, "scale")
 	if has_scale && scale > 0 && scale < 1 {
 		img = render.scale_nearest(&img, scale, context.temp_allocator)
@@ -301,4 +325,66 @@ method_kill :: proc(req: ^Request) {
 		linux.kill(-c.pid, .SIGTERM)
 	}
 	reply_ok(req)
+}
+
+// ---------------------------------------------------------------------------
+// Elements
+// ---------------------------------------------------------------------------
+
+Element_Info :: struct {
+	id:        string,
+	kind:      string,
+	label:     string,
+	x:         int,
+	y:         int,
+	width:     int,
+	height:    int,
+	window_id: u32,
+	enabled:   bool,
+}
+
+ELEMENT_KIND_NAMES := [Element_Kind]string {
+	.Desktop         = "desktop",
+	.Taskbar         = "taskbar",
+	.Start_Button    = "start_button",
+	.Taskbar_Button  = "taskbar_button",
+	.Clock           = "clock",
+	.Start_Menu      = "start_menu",
+	.Menu_Item       = "menu_item",
+	.Frame           = "window_frame",
+	.Title_Bar       = "title_bar",
+	.Minimize_Button = "minimize_button",
+	.Maximize_Button = "maximize_button",
+	.Close_Button    = "close_button",
+}
+
+element_infos :: proc() -> []Element_Info {
+	shell_layout()
+	out := make([]Element_Info, len(shell.elements), context.temp_allocator)
+	for e, i in shell.elements {
+		out[i] = {
+			id        = e.id,
+			kind      = ELEMENT_KIND_NAMES[e.kind],
+			label     = e.label,
+			x         = e.rect.x,
+			y         = e.rect.y,
+			width     = e.rect.w,
+			height    = e.rect.h,
+			window_id = e.window_id,
+			enabled   = e.enabled,
+		}
+	}
+	return out
+}
+
+// Draw the cursor (client image or default arrow) into an image.
+draw_cursor :: proc(img: ^render.Image, x, y: int) {
+	if seat.cursor_hidden {
+		return
+	}
+	if s := seat.cursor_surface; s != nil && s.has_content {
+		render.blit(img, &s.texture, x - seat.cursor_hot_x, y - seat.cursor_hot_y, render.image_rect(img))
+		return
+	}
+	render.draw_arrow_cursor(img, x, y)
 }

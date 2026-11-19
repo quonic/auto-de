@@ -136,6 +136,8 @@ control_flush_all :: proc() {
 }
 
 ctl_client_destroy :: proc(cc: ^Ctl_Client) {
+	jobs_client_gone(cc)
+	clipboard_client_gone(cc)
 	loop_remove(&srv.loop, &cc.watch)
 	linux.close(cc.watch.fd)
 	for x, i in srv.control.clients {
@@ -219,6 +221,12 @@ reply_raw :: proc(req: ^Request, result_json: string) {
 	append(&req.client.out_buf, ..transmute([]u8)strings.to_string(b))
 }
 
+// Reply later (async requests): id_json is the request id, already as JSON.
+send_reply_raw :: proc(cc: ^Ctl_Client, id_json: string, result_json: string) {
+	line := strings.concatenate({"{\"id\":", id_json, ",\"result\":", result_json, "}\n"}, context.temp_allocator)
+	append(&cc.out_buf, ..transmute([]u8)line)
+}
+
 // Marshal any value (struct, map, slice...) as the result.
 reply :: proc(req: ^Request, result: any) {
 	data, err := json.marshal(result, {use_enum_names = true}, context.temp_allocator)
@@ -240,6 +248,11 @@ reply_error :: proc(req: ^Request, message: string) {
 	json_write_string(&b, message)
 	strings.write_string(&b, "}}\n")
 	append(&req.client.out_buf, ..transmute([]u8)strings.to_string(b))
+}
+
+json_marshal_temp :: proc(v: any) -> (string, bool) {
+	data, err := json.marshal(v, {use_enum_names = true}, context.temp_allocator)
+	return string(data), err == nil
 }
 
 json_write_string :: proc(b: ^strings.Builder, s: string) {

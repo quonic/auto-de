@@ -175,29 +175,38 @@ surface_contains :: proc(s: ^Surface, x, y: f64) -> bool {
 	return render.rect_contains({sx, sy, s.texture.width, s.texture.height}, int(x), int(y))
 }
 
-// Topmost client surface at a screen point: popups first, then windows top-down.
+// Topmost client surface at a screen point, honoring the stacking order:
+// start menu > popups > taskbar > windows (decorations belong to the shell).
 surface_at :: proc(x, y: f64) -> ^Surface {
+	if shell_covers_point(x, y) {
+		return nil
+	}
 	for i := len(srv.popups) - 1; i >= 0; i -= 1 {
 		p := srv.popups[i]
 		if p.mapped && p.xdg != nil && surface_contains(p.xdg.surface, x, y) {
 			return p.xdg.surface
 		}
 	}
+	if shell_covers_point_below_popups(x, y) {
+		return nil
+	}
 	if w := window_at(x, y); w != nil {
-		return w.xdg.surface
+		if render.rect_contains(window_content_rect(w), int(x), int(y)) {
+			return w.xdg.surface
+		}
 	}
 	return nil
 }
 
+// Topmost visible window whose frame (or, without decorations, window
+// geometry, so CSD shadows don't swallow clicks) contains the point.
 window_at :: proc(x, y: f64) -> ^Window {
 	for i := len(srv.windows) - 1; i >= 0; i -= 1 {
 		w := srv.windows[i]
-		if !w.mapped || w.minimized || w.xdg == nil || w.xdg.surface == nil {
+		if !window_visible(w) {
 			continue
 		}
-		// Hit-test against the window geometry, so CSD shadows don't swallow clicks.
-		g := xdg_geometry(w.xdg)
-		if render.rect_contains({w.x, w.y, g.w, g.h}, int(x), int(y)) {
+		if render.rect_contains(window_frame_rect(w), int(x), int(y)) {
 			return w
 		}
 	}
@@ -413,6 +422,7 @@ keyboard_set_focus :: proc(s: ^Surface) {
 			}
 		}
 	}
+	selection_focus_changed()
 }
 
 // Keyboard focus goes to the topmost grabbing popup of the focused window,

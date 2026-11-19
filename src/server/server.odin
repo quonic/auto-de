@@ -14,6 +14,8 @@ Options :: struct {
 	debug:   bool, // log wayland traffic
 	quiet:   bool, // don't echo app output to stderr
 	command: []string, // app to launch at startup
+	apps:    []App_Entry, // start menu entries
+	clock:   string, // fixed clock text ("" = real time)
 }
 
 Global :: struct {
@@ -103,7 +105,7 @@ run :: proc(opts: Options) -> int {
 		return 1
 	}
 	register_globals()
-	if !seat_init() {
+	if !seat_init() || !shell_init(opts.apps, opts.clock) || !jobs_init() {
 		return 1
 	}
 	if !control_init() {
@@ -346,6 +348,8 @@ register_globals :: proc() {
 	add_global(&wl.wl_shm_interface, 1, bind_shm)
 	add_global(&wl.wl_output_interface, 4, bind_output)
 	add_global(&wl.xdg_wm_base_interface, 6, bind_xdg_wm_base)
+	add_global(&wl.zxdg_decoration_manager_v1_interface, 1, bind_decoration_manager)
+	add_global(&wl.wl_data_device_manager_interface, 3, bind_data_device_manager)
 }
 
 display_requests := wl.Wl_Display_Requests {

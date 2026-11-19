@@ -5,12 +5,10 @@ import "autode:render"
 import wl "autode:wl"
 
 TASKBAR_HEIGHT :: 28
-CASCADE_START :: 32
+CASCADE_START :: 16
 CASCADE_STEP :: 24
-
-COLOR_DESKTOP :: u32(0xff008080) // teal
-COLOR_FACE :: u32(0xffc0c0c0)    // classic 3D face gray
-COLOR_HILIGHT :: u32(0xffffffff)
+BORDER :: 4    // window frame thickness
+TITLE_H :: 18  // title bar height
 
 cascade_index: int
 
@@ -18,15 +16,46 @@ work_area :: proc() -> render.Rect {
 	return {0, 0, srv.width, srv.height - TASKBAR_HEIGHT}
 }
 
+Insets :: struct {
+	l, t, r, b: int,
+}
+
+// Space taken by server-side decorations around the content.
+decor_insets :: proc(w: ^Window) -> Insets {
+	if !w.ssd || w.fullscreen {
+		return {}
+	}
+	return {BORDER, BORDER + TITLE_H + 1, BORDER, BORDER}
+}
+
+window_content_rect :: proc(w: ^Window) -> render.Rect {
+	g := w.xdg != nil ? xdg_geometry(w.xdg) : render.Rect{}
+	return {w.x, w.y, g.w, g.h}
+}
+
+window_frame_rect :: proc(w: ^Window) -> render.Rect {
+	c := window_content_rect(w)
+	ins := decor_insets(w)
+	return {c.x - ins.l, c.y - ins.t, c.w + ins.l + ins.r, c.h + ins.t + ins.b}
+}
+
+window_visible :: proc(w: ^Window) -> bool {
+	return w.mapped && !w.minimized && w.xdg != nil && w.xdg.surface != nil
+}
+
 window_map :: proc(w: ^Window) {
 	w.mapped = true
 	if !w.placed {
+		// Deterministic cascade of the outer frame.
 		w.placed = true
 		g := xdg_geometry(w.xdg)
+		ins := decor_insets(w)
+		fw := g.w + ins.l + ins.r
+		fh := g.h + ins.t + ins.b
 		wa := work_area()
 		x := CASCADE_START + cascade_index * CASCADE_STEP
 		y := CASCADE_START + cascade_index * CASCADE_STEP
-		if x + g.w > wa.w || y + g.h > wa.h {
+		if x + fw > wa.w || y + fh > wa.h {
 			cascade_index = 0
 			x = CASCADE_START
 			y = CASCADE_START
@@ -36,8 +65,8 @@ window_map :: proc(w: ^Window) {
 			x = wa.x
 			y = wa.y
 		}
-		w.x = x
-		w.y = y
+		w.x = x + ins.l
+		w.y = y + ins.t
 	}
 	// Tell the client which output it is on.
 	if w.xdg != nil && w.xdg.surface != nil {
@@ -127,17 +156,26 @@ window_set_maximized :: proc(w: ^Window, maximized: bool) {
 		return
 	}
 	w.maximized = maximized
+	ins := decor_insets(w)
 	if maximized {
+		w.restore = window_content_rect(w)
 		wa := work_area()
-		w.req_w = wa.w
-		w.req_h = wa.h
+		w.req_w = wa.w - ins.l - ins.r
+		w.req_h = wa.h - ins.t - ins.b
 		if w.placed {
-			w.x = wa.x
-			w.y = wa.y
+			w.x = wa.x + ins.l
+			w.y = wa.y + ins.t
 		}
 	} else {
-		w.req_w = 0
-		w.req_h = 0
+		if w.restore.w > 0 {
+			w.x = w.restore.x
+			w.y = w.restore.y
+			w.req_w = w.restore.w
+			w.req_h = w.restore.h
+		} else {
+			w.req_w = 0
+			w.req_h = 0
+		}
 	}
 	toplevel_send_configure(w)
 	damage_all()
@@ -196,19 +234,25 @@ on_frame_timer :: proc(w: ^Watch, events: linux.EPoll_Event_Set) {
 	send_frame_callbacks()
 }
 
+// Compose the whole screen: desktop, windows (with frames), taskbar, popups, start menu.
 render_frame :: proc() {
 	fb := &srv.fb
 	full := render.image_rect(fb)
-	render.fill_rect(fb, full, COLOR_DESKTOP)
+	shell_layout()
+	render.fill_rect(fb, full, render.C_DESKTOP)
 
 	for w in srv.windows {
-		if !w.mapped || w.minimized || w.xdg == nil || w.xdg.surface == nil {
+		if !window_visible(w) {
 			continue
+		}
+		if w.ssd {
+			shell_draw_frame(w)
 		}
 		s := w.xdg.surface
 		x, y, _ := surface_screen_pos(s)
 		render.blit(fb, &s.texture, x, y, full)
 	}
+	shell_draw_taskbar()
 	for p in srv.popups {
 		if !p.mapped || p.xdg == nil || p.xdg.surface == nil {
 			continue
@@ -218,9 +262,5 @@ render_frame :: proc() {
 			render.blit(fb, &p.xdg.surface.texture, x, y, full)
 		}
 	}
-
-	// Placeholder taskbar (the real shell UI arrives in milestone 4).
-	wa := work_area()
-	render.fill_rect(fb, {0, wa.h, srv.width, TASKBAR_HEIGHT}, COLOR_FACE)
-	render.fill_rect(fb, {0, wa.h, srv.width, 1}, COLOR_HILIGHT)
+	shell_draw_start_menu()
 }

@@ -18,6 +18,8 @@ App :: struct {
 	shm:        ^wl.Object,
 	wm_base:    ^wl.Object,
 	seat:       ^wl.Object,
+	deco_mgr:   ^wl.Object,
+	csd:        bool,
 	surface:    ^wl.Object,
 	xdg:        ^wl.Object,
 	toplevel:   ^wl.Object,
@@ -45,6 +47,8 @@ registry_events := wl.Wl_Registry_Events {
 			app.compositor = wl.wl_registry_bind(obj, name, &wl.wl_compositor_interface, min(version, 4))
 		case "wl_shm":
 			app.shm = wl.wl_registry_bind(obj, name, &wl.wl_shm_interface, 1)
+		case "zxdg_decoration_manager_v1":
+			app.deco_mgr = wl.wl_registry_bind(obj, name, &wl.zxdg_decoration_manager_v1_interface, 1)
 		case "wl_seat":
 			app.seat = wl.wl_registry_bind(obj, name, &wl.wl_seat_interface, min(version, 7))
 			app.seat.handlers = &seat_events
@@ -206,6 +210,8 @@ main :: proc() {
 				app.width, _ = strconv.parse_int(parts[0])
 				app.height, _ = strconv.parse_int(parts[1])
 			}
+		case args[i] == "--csd":
+			app.csd = true
 		case args[i] == "--title" && i + 1 < len(args):
 			i += 1
 			app.title = args[i]
@@ -237,6 +243,10 @@ main :: proc() {
 	app.toplevel.handlers = &toplevel_events
 	wl.xdg_toplevel_set_title(app.toplevel, app.title)
 	wl.xdg_toplevel_set_app_id(app.toplevel, "autode.test")
+	if app.deco_mgr != nil && !app.csd {
+		deco := wl.zxdg_decoration_manager_v1_get_toplevel_decoration(app.deco_mgr, app.toplevel)
+		wl.zxdg_toplevel_decoration_v1_set_mode(deco, u32(wl.Zxdg_Toplevel_Decoration_V1_Mode.server_side))
+	}
 	wl.wl_surface_commit(app.surface)
 	emit("ready")
 

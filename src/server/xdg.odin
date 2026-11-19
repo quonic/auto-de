@@ -42,6 +42,10 @@ Window :: struct {
 	req_w:       int, // size we asked the client for (0 = client decides)
 	req_h:       int,
 	min_w, min_h, max_w, max_h: int,
+	ssd:         bool, // server-side decorations (xdg-decoration negotiated)
+	decoration:  ^wl.Object,
+	resizing:    bool,
+	restore:     render.Rect, // content rect before maximize
 }
 
 Positioner :: struct {
@@ -244,6 +248,7 @@ xdg_surface_commit :: proc(x: ^Xdg_Surface) {
 		} else if !x.surface.has_content && w.mapped {
 			window_unmap(w)
 		}
+		shell_window_committed(w)
 	case .Popup:
 		p := x.popup
 		if !x.configured {
@@ -275,6 +280,10 @@ toplevel_destroyed :: proc(obj: ^wl.Object) {
 			break
 		}
 	}
+	shell_window_destroyed(w)
+	if w.decoration != nil {
+		w.decoration.data = nil
+	}
 	delete(w.title)
 	delete(w.app_id)
 	free(w)
@@ -299,8 +308,12 @@ toplevel_requests := wl.Xdg_Toplevel_Requests {
 		w.app_id = strings.clone(app_id)
 	},
 	show_window_menu = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32, x, y: i32) {},
-	move = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32) {},
-	resize = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32, edges: u32) {},
+	move = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32) {
+		shell_begin_move((^Window)(obj.data))
+	},
+	resize = proc(obj: ^wl.Object, seat: ^wl.Object, serial: u32, edges: u32) {
+		shell_begin_resize((^Window)(obj.data), edges)
+	},
 	set_max_size = proc(obj: ^wl.Object, width, height: i32) {
 		w := (^Window)(obj.data)
 		w.max_w = int(width)
@@ -338,9 +351,12 @@ toplevel_send_configure :: proc(w: ^Window) {
 	if w.maximized { append(&states, u32(wl.Xdg_Toplevel_State.maximized)) }
 	if w.fullscreen { append(&states, u32(wl.Xdg_Toplevel_State.fullscreen)) }
 	if w.activated { append(&states, u32(wl.Xdg_Toplevel_State.activated)) }
+	if w.resizing { append(&states, u32(wl.Xdg_Toplevel_State.resizing)) }
 	bytes := ([^]u8)(raw_data(states))[:len(states) * 4]
 	if w.toplevel.version >= 4 {
-		wl.xdg_toplevel_send_configure_bounds(w.toplevel, i32(srv.width), i32(work_area().h))
+		ins := decor_insets(w)
+		wa := work_area()
+		wl.xdg_toplevel_send_configure_bounds(w.toplevel, i32(wa.w - ins.l - ins.r), i32(wa.h - ins.t - ins.b))
 	}
 	wl.xdg_toplevel_send_configure(w.toplevel, i32(w.req_w), i32(w.req_h), bytes)
 	w.xdg.configure_serial = next_serial()

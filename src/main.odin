@@ -8,8 +8,10 @@ import "core:strings"
 import "autode:server"
 
 USAGE :: `usage:
-  autode run [--size WxH] [--debug] [--quiet] [-- command args...]
+  autode run [--size WxH] [--config FILE] [--clock HH:MM] [--debug] [--quiet] [-- command args...]
       Start a headless session. Prints "AUTODE_READY display=... control=..." when ready.
+      --config FILE   INI file with [session] clock= and [app.*] name=/exec= start menu entries
+      --clock HH:MM   freeze the taskbar clock (for deterministic screenshots)
   autode ctl [--socket PATH] [--out FILE] <method> [{json params} | key=value ...]
       Send one control request and print the JSON response.
       --out FILE writes a screenshot's PNG to FILE instead of printing base64.
@@ -37,6 +39,7 @@ main :: proc() {
 
 cmd_run :: proc(args: []string) -> int {
 	opts := server.Options{width = 1280, height = 800}
+	config_loaded := false
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
 		switch {
@@ -47,6 +50,21 @@ cmd_run :: proc(args: []string) -> int {
 			opts.debug = true
 		case a == "--quiet":
 			opts.quiet = true
+		case a == "--clock" && i + 1 < len(args):
+			i += 1
+			opts.clock = args[i]
+		case a == "--config" && i + 1 < len(args):
+			i += 1
+			cfg, ok := server.load_config(args[i])
+			if !ok {
+				fmt.eprintfln("cannot read config %q", args[i])
+				return 2
+			}
+			config_loaded = true
+			opts.apps = cfg.apps[:]
+			if opts.clock == "" {
+				opts.clock = cfg.clock
+			}
 		case a == "--size" && i + 1 < len(args):
 			i += 1
 			w, h, ok := parse_size(args[i])
@@ -60,6 +78,9 @@ cmd_run :: proc(args: []string) -> int {
 			fmt.eprintfln("unknown option %q", a)
 			return 2
 		}
+	}
+	if !config_loaded {
+		opts.apps = server.default_apps()
 	}
 	return server.run(opts)
 }

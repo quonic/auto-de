@@ -40,8 +40,17 @@ parse_button :: proc(req: ^Request) -> (u32, bool) {
 	return 0, false
 }
 
-// Optional x/y params: move there first. Returns false (after replying) on bad input.
+// Optional x/y or target params: move there first. Returns false (after replying) on bad input.
 move_if_given :: proc(req: ^Request) -> bool {
+	if target, has_target := param_string(req, "target"); has_target {
+		tx, ty, ok := resolve_target(target)
+		if !ok {
+			reply_error(req, fmt.tprintf("unknown target %q (see get_state elements)", target))
+			return false
+		}
+		pointer_move_to(tx, ty)
+		return true
+	}
 	x, has_x := param_f64(req, "x")
 	y, has_y := param_f64(req, "y")
 	if has_x != has_y {
@@ -55,13 +64,13 @@ move_if_given :: proc(req: ^Request) -> bool {
 }
 
 method_mouse_move :: proc(req: ^Request) {
-	x, has_x := param_f64(req, "x")
-	y, has_y := param_f64(req, "y")
-	if !has_x || !has_y {
-		reply_error(req, "mouse_move needs x and y")
+	_, has_x := param_f64(req, "x")
+	_, has_target := param_string(req, "target")
+	if !has_x && !has_target {
+		reply_error(req, "mouse_move needs x and y, or target")
 		return
 	}
-	pointer_move_to(x, y)
+	if !move_if_given(req) { return }
 	reply_pointer(req)
 }
 
@@ -120,14 +129,21 @@ method_mouse_drag :: proc(req: ^Request) {
 	steps, has_steps := param_int(req, "steps")
 	if !has_steps { steps = 10 }
 	steps = clamp(steps, 1, 1000)
-	pointer_move_to(x1, y1)
-	pointer_button(button, true)
+	// Paced like a real drag so clients can react (e.g. start a CSD move).
+	duration, has_duration := param_int(req, "duration_ms")
+	if !has_duration { duration = 300 }
+	step_ms := max(duration / (steps + 2), 0)
+	j := job_begin(req)
+	job_move(j, x1, y1)
+	job_button(j, button, true)
+	job_wait(j, step_ms)
 	for i in 1 ..= steps {
 		t := f64(i) / f64(steps)
-		pointer_move_to(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+		job_move(j, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+		job_wait(j, step_ms)
 	}
-	pointer_button(button, false)
-	reply_pointer(req)
+	job_button(j, button, false)
+	job_submit(j)
 }
 
 method_scroll :: proc(req: ^Request) {
@@ -206,19 +222,24 @@ method_type_text :: proc(req: ^Request) {
 			return
 		}
 	}
+	// delay_ms > 0 types one character at a time (for apps that drop bursts).
+	delay, _ := param_int(req, "delay_ms")
 	user_shift := seat.mods_depressed & MOD_SHIFT != 0
+	j := job_begin(req)
 	for r in text {
 		k, _ := char_to_key(r)
 		if k.shift && !user_shift {
-			keyboard_key(KEY_LEFTSHIFT, true)
+			job_key(j, KEY_LEFTSHIFT, true)
 		}
-		keyboard_key(k.code, true)
-		keyboard_key(k.code, false)
+		job_key(j, k.code, true)
+		job_key(j, k.code, false)
 		if k.shift && !user_shift {
-			keyboard_key(KEY_LEFTSHIFT, false)
+			job_key(j, KEY_LEFTSHIFT, false)
 		}
+		job_wait(j, delay)
 	}
-	reply(req, struct { typed: int }{strings.rune_count(text)})
+	j.result_json = fmt.aprintf(`{{"typed":%d}}`, strings.rune_count(text))
+	job_submit(j)
 }
 
 method_release_all :: proc(req: ^Request) {
