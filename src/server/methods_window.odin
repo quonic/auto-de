@@ -132,8 +132,28 @@ resolve_target :: proc(target: string) -> (x, y: f64, ok: bool) {
 	if strings.has_prefix(target, "window.") {
 		id, parsed := strconv.parse_uint(target[len("window."):])
 		if w := find_window(u32(id)); parsed && w != nil && window_visible(w) {
+			// Prefer the center, else the first visible point (not covered by
+			// other windows, popups or the taskbar) on a grid over the content.
 			c := window_content_rect(w)
-			return f64(c.x + c.w / 2), f64(c.y + c.h / 2), true
+			visible :: proc(w: ^Window, x, y: f64) -> bool {
+				s := surface_at(x, y)
+				return s != nil && window_of_surface(s) == w
+			}
+			cx, cy := f64(c.x + c.w / 2), f64(c.y + c.h / 2)
+			if visible(w, cx, cy) {
+				return cx, cy, true
+			}
+			N :: 12
+			for gy in 0 ..< N {
+				for gx in 0 ..< N {
+					gxp := f64(c.x) + (f64(gx) + 0.5) * f64(c.w) / N
+					gyp := f64(c.y) + (f64(gy) + 0.5) * f64(c.h) / N
+					if visible(w, gxp, gyp) {
+						return gxp, gyp, true
+					}
+				}
+			}
+			return cx, cy, true
 		}
 	}
 	return 0, 0, false

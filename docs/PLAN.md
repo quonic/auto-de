@@ -1,5 +1,7 @@
 # Auto DE — Project Plan
 
+> Status (2026-11-19): milestones 1–8 implemented. See README.md and docs/COMPATIBILITY.md.
+
 ## Context
 
 Auto DE is a Wayland compositor and minimal desktop environment for one job: running GUI applications under automation. A script (CLI / JSON socket) or an AI agent (MCP) must be able to:

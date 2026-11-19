@@ -373,6 +373,13 @@ register_globals :: proc() {
 	add_global(&wl.xdg_wm_base_interface, 6, bind_xdg_wm_base)
 	add_global(&wl.zxdg_decoration_manager_v1_interface, 1, bind_decoration_manager)
 	add_global(&wl.wl_data_device_manager_interface, 3, bind_data_device_manager)
+	add_global(&wl.wl_subcompositor_interface, 1, bind_subcompositor)
+	add_global(&wl.wp_viewporter_interface, 1, bind_viewporter)
+	add_global(&wl.wp_single_pixel_buffer_manager_v1_interface, 1, bind_single_pixel)
+	add_global(&wl.wp_cursor_shape_manager_v1_interface, 1, bind_cursor_shape)
+	if dmabuf_init() {
+		add_global(&wl.zwp_linux_dmabuf_v1_interface, 4, bind_dmabuf)
+	}
 }
 
 display_requests := wl.Wl_Display_Requests {

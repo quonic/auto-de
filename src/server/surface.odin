@@ -29,6 +29,20 @@ Surface :: struct {
 
 	role:         Role,
 	xdg:          ^Xdg_Surface,
+	sub:          ^Subsurface, // role Subsurface
+	stack:        [dynamic]^Surface, // self + subsurfaces, bottom to top (empty = no children)
+
+	// buffer scale and viewport (pending -> current on commit)
+	p_scale:      int,
+	scale:        int,
+	viewport:     ^wl.Object,
+	p_vp_src:     Rect_F,
+	p_vp_dst_w:   int,
+	p_vp_dst_h:   int,
+	p_vp_changed: bool,
+	vp_src:       Rect_F,
+	vp_dst_w:     int,
+	vp_dst_h:     int,
 }
 
 surface_from :: proc(obj: ^wl.Object) -> ^Surface {
@@ -66,6 +80,10 @@ region_requests := wl.Wl_Region_Requests {
 surface_destroyed :: proc(obj: ^wl.Object) {
 	s := surface_from(obj)
 	seat_surface_destroyed(s)
+	surface_tree_destroyed(s)
+	if s.viewport != nil {
+		s.viewport.data = nil
+	}
 	if s.xdg != nil {
 		s.xdg.surface = nil
 	}
@@ -104,7 +122,13 @@ surface_requests := wl.Wl_Surface_Requests {
 	set_opaque_region = proc(obj: ^wl.Object, region: ^wl.Object) {},
 	set_input_region = proc(obj: ^wl.Object, region: ^wl.Object) {},
 	set_buffer_transform = proc(obj: ^wl.Object, transform: i32) {},
-	set_buffer_scale = proc(obj: ^wl.Object, scale: i32) {},
+	set_buffer_scale = proc(obj: ^wl.Object, scale: i32) {
+		if scale <= 0 {
+			wl.post_error(obj, u32(wl.Wl_Surface_Error.invalid_scale), "invalid buffer scale %d", scale)
+			return
+		}
+		surface_from(obj).p_scale = int(scale)
+	},
 	offset = proc(obj: ^wl.Object, x: i32, y: i32) {
 		s := surface_from(obj)
 		s.p_dx = x
@@ -130,6 +154,17 @@ surface_commit :: proc(s: ^Surface) {
 		s.p_attached = false
 		s.p_buffer = nil
 	}
+	if s.p_scale > 0 {
+		s.scale = s.p_scale
+		s.p_scale = 0
+	}
+	if s.p_vp_changed {
+		s.vp_src = s.p_vp_src
+		s.vp_dst_w = s.p_vp_dst_w
+		s.vp_dst_h = s.p_vp_dst_h
+		s.p_vp_changed = false
+	}
+	subsurfaces_parent_committed(s)
 	append(&s.frames, ..s.p_frames[:])
 	clear(&s.p_frames)
 	s.commit_count += 1
@@ -171,6 +206,7 @@ Shm_Pool :: struct {
 Buffer_Kind :: enum {
 	Shm,
 	Single_Pixel,
+	Dmabuf,
 }
 
 Buffer :: struct {
@@ -183,6 +219,9 @@ Buffer :: struct {
 	stride: int,
 	format: u32,
 	color:  u32, // Single_Pixel, premultiplied ARGB
+	dmabuf_fd:   linux.Fd,
+	dmabuf_map:  [^]u8,
+	dmabuf_size: int,
 }
 
 bind_shm :: proc(client: ^Client, obj: ^wl.Object) {
@@ -299,6 +338,10 @@ buffer_destroyed :: proc(obj: ^wl.Object) {
 	if b.pool != nil {
 		pool_unref(b.pool)
 	}
+	if b.kind == .Dmabuf {
+		linux.munmap(b.dmabuf_map, uint(b.dmabuf_size))
+		linux.close(b.dmabuf_fd)
+	}
 	free(b)
 }
 
@@ -319,21 +362,32 @@ buffer_copy_to_image :: proc(b: ^Buffer, img: ^render.Image) -> bool {
 			wl.post_error(b.obj, u32(wl.Wl_Shm_Error.invalid_fd), "shm pool file is smaller than the buffer")
 			return false
 		}
-		render.image_resize(img, b.width, b.height)
-		swap_rb := b.format == DRM_FORMAT_ABGR8888 || b.format == DRM_FORMAT_XBGR8888
-		img.alpha = b.format == u32(wl.Wl_Shm_Format.argb8888) || b.format == DRM_FORMAT_ABGR8888
-		for y in 0 ..< b.height {
-			src := ([^]u32)(&p.data[b.offset + y * b.stride])[:b.width]
-			dst := img.pixels[y * b.width:][:b.width]
-			if swap_rb {
-				for v, i in src {
-					dst[i] = (v & 0xff00ff00) | (v & 0xff) << 16 | (v >> 16) & 0xff
-				}
-			} else {
-				copy(dst, src)
-			}
-		}
+		copy_pixels(p.data, b, img)
+		return true
+	case .Dmabuf:
+		dmabuf_sync(b, true)
+		copy_pixels(b.dmabuf_map, b, img)
+		dmabuf_sync(b, false)
 		return true
 	}
 	return false
+}
+
+// Copy a 32-bit RGB buffer into a premultiplied ARGB image.
+copy_pixels :: proc(base: [^]u8, b: ^Buffer, img: ^render.Image) {
+	render.image_resize(img, b.width, b.height)
+	// wl_shm argb8888/xrgb8888 (0, 1) are the same layouts as DRM AR24/XR24.
+	swap_rb := b.format == DRM_FORMAT_ABGR8888 || b.format == DRM_FORMAT_XBGR8888
+	img.alpha = b.format == u32(wl.Wl_Shm_Format.argb8888) || b.format == DRM_FORMAT_ARGB8888 || b.format == DRM_FORMAT_ABGR8888
+	for y in 0 ..< b.height {
+		src := ([^]u32)(&base[b.offset + y * b.stride])[:b.width]
+		dst := img.pixels[y * b.width:][:b.width]
+		if swap_rb {
+			for v, i in src {
+				dst[i] = (v & 0xff00ff00) | (v & 0xff) << 16 | (v >> 16) & 0xff
+			}
+		} else {
+			copy(dst, src)
+		}
+	}
 }

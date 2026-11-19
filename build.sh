@@ -34,6 +34,8 @@ build() {
 
 test() {
 	"$ODIN" test tests/wl "${FLAGS[@]}"
+	"$ODIN" test tests/render "${FLAGS[@]}"
+	"$ODIN" test tests/server "${FLAGS[@]}"
 	tests/run_integration.sh
 	python3 -I tests/mcp_smoke.py
 }

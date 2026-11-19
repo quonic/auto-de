@@ -133,13 +133,22 @@ parse_key :: proc(name: string) -> (u32, bool) {
 parse_combo :: proc(combo: string, allocator := context.temp_allocator) -> ([]u32, bool) {
 	out: [dynamic]u32
 	out.allocator = allocator
-	parts := strings.split(combo, "+", context.temp_allocator)
-	for p, i in parts {
+	// "ctrl++" / "+": the last key is the plus key itself.
+	trailing_plus := combo == "+" || strings.has_suffix(combo, "++")
+	body := combo
+	if trailing_plus {
+		body = combo[:max(len(combo) - 2, 0)]
+	}
+	parts: [dynamic]string
+	parts.allocator = context.temp_allocator
+	if body != "" {
+		append(&parts, ..strings.split(body, "+", context.temp_allocator))
+	}
+	if trailing_plus {
+		append(&parts, "plus")
+	}
+	for p in parts {
 		part := strings.trim_space(p)
-		// "ctrl++" -> the last key is '+'
-		if part == "" && i == len(parts) - 1 && i > 0 {
-			part = "plus"
-		}
 		code, ok := parse_key(part)
 		if !ok {
 			return nil, false

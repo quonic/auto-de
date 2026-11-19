@@ -36,6 +36,7 @@ Seat :: struct {
 	cursor_hot_x:   int,
 	cursor_hot_y:   int,
 	cursor_hidden:  bool,
+	cursor_shape:   u32, // wp_cursor_shape_device_v1 shape (0 = unset)
 
 	// keyboard
 	kb_focus:       ^Surface,
@@ -164,15 +165,25 @@ surface_local :: proc(s: ^Surface, x, y: f64) -> (f64, f64) {
 	return x - f64(sx), y - f64(sy)
 }
 
-surface_contains :: proc(s: ^Surface, x, y: f64) -> bool {
-	if s == nil || !s.has_content {
-		return false
+// Topmost surface (including subsurfaces) of a root surface's tree at a point.
+surface_hit :: proc(root: ^Surface, x, y: f64) -> ^Surface {
+	if root == nil {
+		return nil
 	}
-	sx, sy, visible := surface_screen_pos(s)
+	sx, sy, visible := surface_screen_pos(root)
 	if !visible {
-		return false
+		return nil
 	}
-	return render.rect_contains({sx, sy, s.texture.width, s.texture.height}, int(x), int(y))
+	return surface_tree_at(root, sx, sy, x, y)
+}
+
+// Root of a subsurface tree.
+surface_root :: proc(s: ^Surface) -> ^Surface {
+	r := s
+	for r != nil && r.sub != nil && r.sub.parent != nil {
+		r = r.sub.parent
+	}
+	return r
 }
 
 // Topmost client surface at a screen point, honoring the stacking order:
@@ -183,14 +194,19 @@ surface_at :: proc(x, y: f64) -> ^Surface {
 	}
 	for i := len(srv.popups) - 1; i >= 0; i -= 1 {
 		p := srv.popups[i]
-		if p.mapped && p.xdg != nil && surface_contains(p.xdg.surface, x, y) {
-			return p.xdg.surface
+		if p.mapped && p.xdg != nil {
+			if hit := surface_hit(p.xdg.surface, x, y); hit != nil {
+				return hit
+			}
 		}
 	}
 	if shell_covers_point_below_popups(x, y) {
 		return nil
 	}
 	if w := window_at(x, y); w != nil {
+		if hit := surface_hit(w.xdg.surface, x, y); hit != nil {
+			return hit
+		}
 		if render.rect_contains(window_content_rect(w), int(x), int(y)) {
 			return w.xdg.surface
 		}
@@ -214,7 +230,8 @@ window_at :: proc(x, y: f64) -> ^Window {
 }
 
 // The toplevel a surface belongs to (following popup parents).
-window_of_surface :: proc(s: ^Surface) -> ^Window {
+window_of_surface :: proc(surface: ^Surface) -> ^Window {
+	s := surface_root(surface)
 	if s == nil || s.xdg == nil {
 		return nil
 	}
@@ -259,6 +276,7 @@ pointer_set_focus :: proc(s: ^Surface) {
 	// The new client decides on its cursor; show the default until it does.
 	seat.cursor_surface = nil
 	seat.cursor_hidden = false
+	seat.cursor_shape = 0
 	if s != nil {
 		serial := next_serial()
 		sx, sy := surface_local(s, seat.px, seat.py)
@@ -308,8 +326,8 @@ pointer_button :: proc(button: u32, pressed: bool) {
 		if len(seat.buttons_down) == 1 {
 			seat.grab_surface = target
 		}
-		if w := window_of_surface(target); w != nil && target.xdg.role == .Toplevel {
-			window_focus(w)
+		if root := surface_root(target); root != nil && root.xdg != nil && root.xdg.role == .Toplevel {
+			window_focus(root.xdg.window)
 		}
 	} else {
 		found := false

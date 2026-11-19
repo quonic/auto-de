@@ -149,6 +149,16 @@ echo "test: clipboard"
 ctl clipboard_set text='hello clipboard' >/dev/null
 ctl clipboard_get | grep -q '"text":"hello clipboard"' || fail "clipboard round trip"
 
+echo "test: subsurfaces, viewporter, single-pixel buffers"
+ctl launch "{\"command\":[\"$CLIENT\",\"--subsurface\",\"--title\",\"Subsurfaces\",\"--size\",\"200x150\"]}" >/dev/null
+ctl wait_for_window title=Subsurfaces >/dev/null || fail "subsurface window"
+ctl wait_for_idle quiet_ms=200 >/dev/null
+SWIN=$(ctl get_state | python3 -I -c "import json,sys; print([w['id'] for w in json.load(sys.stdin)['windows'] if w['title']=='Subsurfaces'][0])")
+ctl --out "$WORK/sub.png" screenshot window_id=$SWIN >/dev/null
+if [[ ${UPDATE_GOLDEN:-} == 1 || ! -f $GOLDEN/subsurfaces.png ]]; then cp "$WORK/sub.png" "$GOLDEN/subsurfaces.png"; echo "  updated golden subsurfaces.png"
+else cmp -s "$WORK/sub.png" "$GOLDEN/subsurfaces.png" || { cp "$WORK/sub.png" /tmp/autode-subsurfaces.actual.png; fail "subsurfaces differ from golden"; }; fi
+ctl close window_id=$SWIN >/dev/null
+
 echo "test: recording (y4m, and mp4 when ffmpeg is installed)"
 ctl record_start path="$WORK/rec.y4m" fps=20 window_id=1 >/dev/null || fail "record_start y4m"
 ctl mouse_move x=500 y=500 >/dev/null; sleep 0.3

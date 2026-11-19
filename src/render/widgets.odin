@@ -191,3 +191,24 @@ fill_gradient_v :: proc(dst: ^Image, r: Rect, from, to: u32) {
 		fill_rect(dst, {r.x, r.y + i, r.w, 1}, c)
 	}
 }
+
+// Text cursor (I-beam), hotspot at its center.
+CURSOR_IBEAM := []string {
+	"###.###",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"...#...",
+	"###.###",
+}
+
+draw_ibeam_cursor :: proc(dst: ^Image, x, y: int) {
+	draw_pattern(dst, x - 3, y - 6, CURSOR_IBEAM, C_BLACK)
+}

@@ -391,7 +391,13 @@ draw_cursor :: proc(img: ^render.Image, x, y: int) {
 		return
 	}
 	if s := seat.cursor_surface; s != nil && s.has_content {
-		render.blit(img, &s.texture, x - seat.cursor_hot_x, y - seat.cursor_hot_y, render.image_rect(img))
+		draw_surface(img, s, x - seat.cursor_hot_x, y - seat.cursor_hot_y, render.image_rect(img))
+		return
+	}
+	CURSOR_SHAPE_TEXT :: 9
+	CURSOR_SHAPE_VERTICAL_TEXT :: 10
+	if seat.cursor_shape == CURSOR_SHAPE_TEXT || seat.cursor_shape == CURSOR_SHAPE_VERTICAL_TEXT {
+		render.draw_ibeam_cursor(img, x, y)
 		return
 	}
 	render.draw_arrow_cursor(img, x, y)

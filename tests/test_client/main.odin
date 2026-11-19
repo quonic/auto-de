@@ -20,6 +20,11 @@ App :: struct {
 	seat:       ^wl.Object,
 	deco_mgr:   ^wl.Object,
 	csd:        bool,
+	subcomp:    ^wl.Object,
+	viewporter: ^wl.Object,
+	spb:        ^wl.Object,
+	with_sub:   bool,
+	sub_done:   bool,
 	surface:    ^wl.Object,
 	xdg:        ^wl.Object,
 	toplevel:   ^wl.Object,
@@ -47,6 +52,12 @@ registry_events := wl.Wl_Registry_Events {
 			app.compositor = wl.wl_registry_bind(obj, name, &wl.wl_compositor_interface, min(version, 4))
 		case "wl_shm":
 			app.shm = wl.wl_registry_bind(obj, name, &wl.wl_shm_interface, 1)
+		case "wl_subcompositor":
+			app.subcomp = wl.wl_registry_bind(obj, name, &wl.wl_subcompositor_interface, 1)
+		case "wp_viewporter":
+			app.viewporter = wl.wl_registry_bind(obj, name, &wl.wp_viewporter_interface, 1)
+		case "wp_single_pixel_buffer_manager_v1":
+			app.spb = wl.wl_registry_bind(obj, name, &wl.wp_single_pixel_buffer_manager_v1_interface, 1)
 		case "zxdg_decoration_manager_v1":
 			app.deco_mgr = wl.wl_registry_bind(obj, name, &wl.zxdg_decoration_manager_v1_interface, 1)
 		case "wl_seat":
@@ -188,6 +199,56 @@ draw :: proc(w, h: int) {
 	app.drawn_w = w
 	app.drawn_h = h
 	emit("drawn %d %d", w, h)
+	if app.with_sub && !app.sub_done {
+		app.sub_done = true
+		add_subsurfaces()
+	}
+}
+
+// Subsurface 1: a single-pixel yellow buffer stretched to 60x40 by a viewport at (20,20).
+// Subsurface 2: the shm test pattern cropped (viewport source) to its green quadrant,
+// scaled to 40x40, placed below subsurface 1 at (60,40) (overlapping it).
+add_subsurfaces :: proc() {
+	if app.subcomp == nil || app.viewporter == nil || app.spb == nil {
+		emit("error missing subsurface protocols")
+		return
+	}
+	s1 := wl.wl_compositor_create_surface(app.compositor)
+	sub1 := wl.wl_subcompositor_get_subsurface(app.subcomp, s1, app.surface)
+	wl.wl_subsurface_set_position(sub1, 20, 20)
+	buf := wl.wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(app.spb, 0xffffffff, 0xffffffff, 0, 0xffffffff)
+	vp1 := wl.wp_viewporter_get_viewport(app.viewporter, s1)
+	wl.wp_viewport_set_destination(vp1, 60, 40)
+	wl.wl_surface_attach(s1, buf, 0, 0)
+	wl.wl_surface_commit(s1)
+
+	s2 := wl.wl_compositor_create_surface(app.compositor)
+	sub2 := wl.wl_subcompositor_get_subsurface(app.subcomp, s2, app.surface)
+	wl.wl_subsurface_set_position(sub2, 60, 40)
+	wl.wl_subsurface_place_below(sub2, s1)
+	stride := app.drawn_w * 4
+	size := stride * app.drawn_h
+	fd, _ := linux.memfd_create("autode-test-sub", {.CLOEXEC})
+	defer linux.close(fd)
+	linux.ftruncate(fd, i64(size))
+	ptr, _ := linux.mmap(0, uint(size), {.READ, .WRITE}, {.SHARED}, fd, 0)
+	px := ([^]u32)(ptr)[:app.drawn_w * app.drawn_h]
+	for y in 0 ..< app.drawn_h {
+		for x in 0 ..< app.drawn_w {
+			px[y * app.drawn_w + x] = x >= app.drawn_w / 2 && y < app.drawn_h / 2 ? 0xff00aa00 : 0xffff00ff
+		}
+	}
+	linux.munmap(ptr, uint(size))
+	pool := wl.wl_shm_create_pool(app.shm, fd, i32(size))
+	b2 := wl.wl_shm_pool_create_buffer(pool, 0, i32(app.drawn_w), i32(app.drawn_h), i32(stride), u32(wl.Wl_Shm_Format.xrgb8888))
+	wl.wl_shm_pool_destroy(pool)
+	vp2 := wl.wp_viewporter_get_viewport(app.viewporter, s2)
+	wl.wp_viewport_set_source(vp2, wl.fixed_from_int(i32(app.drawn_w / 2 + 10)), wl.fixed_from_int(10), wl.fixed_from_int(40), wl.fixed_from_int(40))
+	wl.wl_surface_attach(s2, b2, 0, 0)
+	wl.wl_surface_commit(s2)
+	// Positions and stacking apply on the parent's commit.
+	wl.wl_surface_commit(app.surface)
+	emit("subsurfaces")
 }
 
 buffer_events := wl.Wl_Buffer_Events {
@@ -210,6 +271,8 @@ main :: proc() {
 				app.width, _ = strconv.parse_int(parts[0])
 				app.height, _ = strconv.parse_int(parts[1])
 			}
+		case args[i] == "--subsurface":
+			app.with_sub = true
 		case args[i] == "--csd":
 			app.csd = true
 		case args[i] == "--title" && i + 1 < len(args):

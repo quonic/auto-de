@@ -65,6 +65,7 @@ claude mcp add autode -- /path/to/build/autode mcp --size 1280x800
 | Apps | `launch {command, env?, cwd?, isolate_home?}`, `processes`, `app_output {pid, tail?, stream?}`, `kill {pid}` |
 | Sync | `wait_for_window {title?, app_id?, match?}`, `wait_for_idle {quiet_ms?}`, `wait_for_change {region?/window_id?}`, `wait_for_stable {quiet_ms?}` — all take `timeout_ms` |
 | Desktop | `start_menu {open?}`, `set_clock {text}`, `clipboard_get`, `clipboard_set {text}`, `ping`, `quit` |
+| Recording | `record_start {path, fps?, window_id?, region?, include_cursor?}`, `record_stop` |
 
 ## Configuration
 
@@ -80,7 +81,17 @@ exec = alacritty
 `autode run --config autode.ini`. Without a config, the Start menu lists common apps found in PATH.
 `--isolate-home` runs every app with a fresh, empty `HOME`.
 
+## Recording and watching
+
+```sh
+autode ctl record_start path=run.mp4 fps=30      # or window_id=3, region={...}; .y4m needs no ffmpeg
+autode ctl record_stop
+autode run --nested                              # show the session in a window on your desktop
+autode run --interactive                         # ...and forward your mouse/keyboard into it
+autode mcp --nested                              # watch an agent work
+```
+
 ## Status
 
-See [docs/PLAN.md](docs/PLAN.md). Done: wire protocol, headless compositor, input, desktop shell,
-waits, MCP. Next: video recording, nested (windowed) backend, linux-dmabuf for GPU clients.
+All milestones in [docs/PLAN.md](docs/PLAN.md) are implemented. App support and known
+limitations: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).

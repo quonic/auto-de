@@ -220,7 +220,8 @@ xdg_geometry :: proc(x: ^Xdg_Surface) -> render.Rect {
 		return x.geometry
 	}
 	if x.surface != nil && x.surface.has_content {
-		return {0, 0, x.surface.texture.width, x.surface.texture.height}
+		w, h := surface_size(x.surface)
+		return {0, 0, w, h}
 	}
 	return {}
 }
@@ -428,6 +429,13 @@ xdg_origin :: proc(x: ^Xdg_Surface) -> (int, int, bool) {
 
 // Screen position where a surface's buffer is drawn.
 surface_screen_pos :: proc(s: ^Surface) -> (int, int, bool) {
+	if s.sub != nil {
+		if s.sub.parent == nil {
+			return 0, 0, false
+		}
+		px, py, ok := surface_screen_pos(s.sub.parent)
+		return px + s.sub.x, py + s.sub.y, ok
+	}
 	if s.xdg == nil {
 		return 0, 0, false
 	}

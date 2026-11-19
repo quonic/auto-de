@@ -250,7 +250,7 @@ render_frame :: proc() {
 		}
 		s := w.xdg.surface
 		x, y, _ := surface_screen_pos(s)
-		render.blit(fb, &s.texture, x, y, full)
+		draw_surface_tree(fb, s, x, y, full)
 	}
 	shell_draw_taskbar()
 	for p in srv.popups {
@@ -259,7 +259,7 @@ render_frame :: proc() {
 		}
 		x, y, ok := surface_screen_pos(p.xdg.surface)
 		if ok {
-			render.blit(fb, &p.xdg.surface.texture, x, y, full)
+			draw_surface_tree(fb, p.xdg.surface, x, y, full)
 		}
 	}
 	shell_draw_start_menu()

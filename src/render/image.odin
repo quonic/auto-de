@@ -139,3 +139,26 @@ scale_nearest :: proc(src: ^Image, scale: f64, allocator := context.allocator) -
 	}
 	return out
 }
+
+// Nearest-neighbour scaled copy: the source rectangle (sx, sy, sw, sh) of `src`
+// (in source pixels, may be fractional) is drawn into (dx, dy, dw, dh).
+blit_scaled :: proc(dst: ^Image, src: ^Image, sx, sy, sw, sh: f64, dx, dy, dw, dh: int, clip: Rect) {
+	if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 || src.width == 0 || src.height == 0 {
+		return
+	}
+	area := rect_intersect(rect_intersect({dx, dy, dw, dh}, image_rect(dst)), clip)
+	if rect_empty(area) {
+		return
+	}
+	fx := sw / f64(dw)
+	fy := sh / f64(dh)
+	for y in area.y ..< area.y + area.h {
+		srow := clamp(int(sy + (f64(y - dy) + 0.5) * fy), 0, src.height - 1)
+		drow := dst.pixels[y * dst.width:][:dst.width]
+		for x in area.x ..< area.x + area.w {
+			scol := clamp(int(sx + (f64(x - dx) + 0.5) * fx), 0, src.width - 1)
+			p := src.pixels[srow * src.width + scol]
+			drow[x] = src.alpha ? blend_over(drow[x], p) : p | 0xff000000
+		}
+	}
+}
