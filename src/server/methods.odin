@@ -21,6 +21,7 @@ register_methods :: proc() {
 	register_method("kill", method_kill)
 	register_input_methods()
 	register_window_methods()
+	register_wait_methods()
 }
 
 method_ping :: proc(req: ^Request) {
@@ -260,12 +261,18 @@ method_launch :: proc(req: ^Request) {
 			}
 		}
 	}
-	pid, launched := launch_app(cmd, extra[:])
+	isolate, has_isolate := param_bool(req, "isolate_home")
+	if !has_isolate {
+		isolate = isolate_home_default
+	}
+	cwd, _ := param_string(req, "cwd")
+	pid, launched := launch_app(cmd, extra[:], isolate, cwd)
 	if !launched {
 		reply_error(req, fmt.tprintf("failed to launch %v", cmd))
 		return
 	}
-	reply(req, struct { pid: int }{pid})
+	c := find_child(pid)
+	reply(req, struct { pid: int, home: string }{pid, c != nil ? c.home : ""})
 }
 
 // ---------------------------------------------------------------------------

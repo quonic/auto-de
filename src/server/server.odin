@@ -16,6 +16,7 @@ Options :: struct {
 	command: []string, // app to launch at startup
 	apps:    []App_Entry, // start menu entries
 	clock:   string, // fixed clock text ("" = real time)
+	isolate_home: bool, // launch every app with a fresh, empty HOME
 }
 
 Global :: struct {
@@ -105,7 +106,8 @@ run :: proc(opts: Options) -> int {
 		return 1
 	}
 	register_globals()
-	if !seat_init() || !shell_init(opts.apps, opts.clock) || !jobs_init() {
+	isolate_home_default = opts.isolate_home
+	if !seat_init() || !shell_init(opts.apps, opts.clock) || !jobs_init() || !waits_init() {
 		return 1
 	}
 	if !control_init() {
@@ -119,7 +121,7 @@ run :: proc(opts: Options) -> int {
 	os.flush(os.stdout)
 
 	if len(opts.command) > 0 {
-		if _, ok := launch_app(opts.command, nil); !ok {
+		if _, ok := launch_app(opts.command, nil, opts.isolate_home); !ok {
 			log("failed to launch %v", opts.command)
 		}
 	}
@@ -159,6 +161,9 @@ cleanup :: proc() {
 		linux.unlink(strings.clone_to_cstring(srv.lock_path, context.temp_allocator))
 	}
 	kill_children()
+	if session_dir != "" {
+		os.remove_all(session_dir)
+	}
 }
 
 open_display_socket :: proc() -> bool {

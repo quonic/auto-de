@@ -556,7 +556,7 @@ activate_element :: proc(e: ^Element) {
 	case .Menu_Item:
 		shell.start_open = false
 		if e.index >= 0 && e.index < len(shell.apps) {
-			launch_app(shell.apps[e.index].command, nil)
+			launch_app(shell.apps[e.index].command, nil, isolate_home_default)
 		}
 	case .Taskbar_Button:
 		if w == nil { return }

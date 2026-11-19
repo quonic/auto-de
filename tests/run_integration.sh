@@ -22,6 +22,15 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; echo "--- server log" >&2; cat "$WORK/server.log" >&2; exit 1; }
 ctl() { "$AUTODE" ctl "$@"; }
 
+# Assert a Python expression over get_state (d = state, win(id) = window dict).
+state_is() {
+	ctl get_state | python3 -I -c "
+import json, sys
+d = json.load(sys.stdin)
+def win(i): return next(w for w in d['windows'] if w['id'] == i)
+sys.exit(0 if ($1) else 1)"
+}
+
 # Poll get_state until a jq-free grep matches.
 wait_for() {
 	local pattern=$1 tries=50
@@ -65,14 +74,24 @@ echo "test: ping"
 echo "test: empty desktop"
 check_golden desktop_empty
 
-echo "test: test client window"
+echo "test: test client window (wait_for_window, wait_for_idle)"
 ctl launch "{\"command\":[\"$CLIENT\"]}" >/dev/null
-wait_for '"title":"Auto DE Test Client"'
-wait_for '"mapped":true'
+ctl wait_for_window title="Auto DE Test Client" match=exact timeout_ms=5000 | grep -q '"mapped":true' || fail "wait_for_window"
+ctl wait_for_idle quiet_ms=200 timeout_ms=5000 >/dev/null || fail "wait_for_idle"
 check_golden test_client_window
 
+echo "test: wait timeouts and wait_for_change"
+ctl wait_for_window title=NoSuchWindow timeout_ms=200 >/dev/null 2>&1 && fail "wait_for_window should time out"
+ctl wait_for_change timeout_ms=200 >/dev/null 2>&1 && fail "wait_for_change should time out on a static screen"
+( sleep 0.2; ctl start_menu open=true >/dev/null ) &
+BG=$!
+ctl wait_for_change timeout_ms=3000 | grep -q '"changed":true' || fail "wait_for_change"
+wait "$BG"
+ctl start_menu open=false >/dev/null
+ctl wait_for_stable quiet_ms=100 timeout_ms=3000 >/dev/null || fail "wait_for_stable"
+
 echo "test: window screenshot size"
-ctl screenshot window_id=1 | grep -q '"width":328' || fail "window screenshot (frame 328 wide)"
+ctl screenshot window_id=1 | python3 -I -c "import json,sys; r=json.load(sys.stdin); sys.exit(0 if (r['width'],r['height'])==(328,267) else 1)" || fail "window screenshot (frame 328x267)"
 
 echo "test: pointer and keyboard input reach the client"
 CPID=$(ctl processes | grep -o '"pid":[0-9]*' | head -1 | cut -d: -f2)
@@ -86,16 +105,15 @@ for expect in 'pointer_enter 80 61' 'button 272 pressed' 'button 272 released' '
 		'key 29 pressed' 'modifiers 4 0' 'key 30 pressed' 'key 42 pressed' 'key 2 pressed'; do
 	grep -q "$expect" <<< "$OUT" || fail "client did not receive: $expect"
 done
-STATE=$(ctl get_state)
-grep -q '"keyboard":{[^}]*"window_id":1' <<< "$STATE" || fail "keyboard focus"
+state_is "d['keyboard']['window_id'] == 1" || fail "keyboard focus"
 
 echo "test: second window takes focus, click refocuses first"
 ctl launch "{\"command\":[\"$CLIENT\",\"--title\",\"Second\"]}" >/dev/null
 wait_for '"title":"Second"'
 sleep 0.2
-ctl get_state | grep -q '"id":2,[^}]*"focused":true\|"focused":true[^}]*"id":2' || fail "second window not focused"
+state_is "win(2)['focused']" || fail "second window not focused"
 ctl mouse_click x=30 y=60 >/dev/null   # visible part of window 1's content
-ctl get_state | grep -q '"keyboard":{[^}]*"window_id":1' || fail "click did not refocus window 1"
+state_is "d['keyboard']['window_id'] == 1 and win(1)['focused']" || fail "click did not refocus window 1"
 check_golden two_windows_focus
 
 echo "test: shell elements"
@@ -116,14 +134,12 @@ ctl get_state | grep -q '"start_menu_open":false' || fail "start menu did not cl
 
 echo "test: title bar drag moves the window"
 ctl mouse_drag x1=60 y1=28 x2=460 y2=328 >/dev/null
-ctl get_state | grep -q '"id":1,[^}]*"x":416,"y":316\|"x":416,"y":316,[^}]*"id":1' \
-	|| ctl get_state | python3 -I -c "import json,sys; w=[w for w in json.load(sys.stdin)['windows'] if w['id']==1][0]; sys.exit(0 if (w['x'],w['y'])==(416,316) else 1)" \
-	|| fail "window 1 not at 416,316 after drag"
+state_is "(win(1)['x'], win(1)['y']) == (416, 316)" || fail "window 1 not at 416,316 after drag"
 
 echo "test: minimize via taskbar, close via title bar"
 ctl mouse_click target=taskbar.window.2 >/dev/null   # focus/restore second
 ctl mouse_click target=taskbar.window.2 >/dev/null   # focused -> minimize
-ctl get_state | python3 -I -c "import json,sys; w=[w for w in json.load(sys.stdin)['windows'] if w['id']==2][0]; sys.exit(0 if w['minimized'] else 1)" || fail "minimize"
+state_is "win(2)['minimized']" || fail "minimize"
 ctl mouse_click target=window.3.close >/dev/null
 for _ in $(seq 30); do ctl get_state | grep -q '"title":"From Menu"' || break; sleep 0.1; done
 ctl get_state | grep -q '"title":"From Menu"' && fail "close button did not close window 3"

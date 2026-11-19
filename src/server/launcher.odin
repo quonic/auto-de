@@ -1,5 +1,6 @@
 package server
 
+import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
@@ -20,6 +21,28 @@ Child :: struct {
 	stderr:    Output_Stream,
 	exited:    bool,
 	exit_code: int, // exit status, or -signal if killed
+	home:      string, // isolated HOME, if any
+}
+
+isolate_home_default: bool
+session_dir: string // $XDG_RUNTIME_DIR/<display>.d, removed on exit
+home_counter: int
+
+// Create a fresh HOME (with XDG dirs) under the session directory.
+make_isolated_home :: proc() -> (string, bool) {
+	if session_dir == "" {
+		session_dir = fmt.aprintf("%s/%s.d", srv.runtime_dir, srv.display_name)
+	}
+	home_counter += 1
+	home := fmt.aprintf("%s/home-%d", session_dir, home_counter)
+	for sub in ([]string{"", "/.config", "/.local/share", "/.local/state", "/.cache"}) {
+		if err := os.make_directory_all(strings.concatenate({home, sub}, context.temp_allocator)); err != nil {
+			log("cannot create %s%s: %v", home, sub, err)
+			delete(home)
+			return "", false
+		}
+	}
+	return home, true
 }
 
 children: [dynamic]^Child
@@ -100,7 +123,7 @@ to_cstrings :: proc(list: []string, allocator := context.temp_allocator) -> [^]c
 }
 
 // Start an app on our display. stdout/stderr are captured (see app_output).
-launch_app :: proc(command: []string, extra_env: []string) -> (pid: int, ok: bool) {
+launch_app :: proc(command: []string, extra_env: []string, isolate_home := false, cwd := "") -> (pid: int, ok: bool) {
 	exe, found := find_executable(command[0])
 	if !found {
 		log("launch: %s not found", command[0])
@@ -108,7 +131,25 @@ launch_app :: proc(command: []string, extra_env: []string) -> (pid: int, ok: boo
 	}
 	exe_c := strings.clone_to_cstring(exe, context.temp_allocator)
 	argv := to_cstrings(command)
-	envp := to_cstrings(build_env(extra_env))
+	env_extra: [dynamic]string
+	env_extra.allocator = context.temp_allocator
+	home := ""
+	if isolate_home {
+		h, made := make_isolated_home()
+		if !made {
+			return 0, false
+		}
+		home = h
+		append(&env_extra,
+			strings.concatenate({"HOME=", h}, context.temp_allocator),
+			strings.concatenate({"XDG_CONFIG_HOME=", h, "/.config"}, context.temp_allocator),
+			strings.concatenate({"XDG_DATA_HOME=", h, "/.local/share"}, context.temp_allocator),
+			strings.concatenate({"XDG_STATE_HOME=", h, "/.local/state"}, context.temp_allocator),
+			strings.concatenate({"XDG_CACHE_HOME=", h, "/.cache"}, context.temp_allocator))
+	}
+	append(&env_extra, ..extra_env)
+	envp := to_cstrings(build_env(env_extra[:]))
+	cwd_c := cwd != "" ? strings.clone_to_cstring(cwd, context.temp_allocator) : nil
 
 	out_pipe, err_pipe: [2]linux.Fd
 	if linux.pipe2(&out_pipe, {.CLOEXEC}) != .NONE {
@@ -138,6 +179,9 @@ launch_app :: proc(command: []string, extra_env: []string) -> (pid: int, ok: boo
 		linux.dup2(devnull, 0)
 		linux.dup2(out_pipe[1], 1)
 		linux.dup2(err_pipe[1], 2)
+		if cwd_c != nil && linux.chdir(cwd_c) != .NONE {
+			linux.exit(126)
+		}
 		linux.execve(exe_c, argv, envp)
 		linux.exit(127)
 	}
@@ -146,6 +190,7 @@ launch_app :: proc(command: []string, extra_env: []string) -> (pid: int, ok: boo
 	linux.close(err_pipe[1])
 	c := new(Child)
 	c.pid = child_pid
+	c.home = home
 	c.command = make([]string, len(command))
 	for s, i in command {
 		c.command[i] = strings.clone(s)

@@ -12,6 +12,7 @@ USAGE :: `usage:
       Start a headless session. Prints "AUTODE_READY display=... control=..." when ready.
       --config FILE   INI file with [session] clock= and [app.*] name=/exec= start menu entries
       --clock HH:MM   freeze the taskbar clock (for deterministic screenshots)
+      --isolate-home  launch apps with a fresh empty HOME (no personal settings/data)
   autode ctl [--socket PATH] [--out FILE] <method> [{json params} | key=value ...]
       Send one control request and print the JSON response.
       --out FILE writes a screenshot's PNG to FILE instead of printing base64.
@@ -50,6 +51,8 @@ cmd_run :: proc(args: []string) -> int {
 			opts.debug = true
 		case a == "--quiet":
 			opts.quiet = true
+		case a == "--isolate-home":
+			opts.isolate_home = true
 		case a == "--clock" && i + 1 < len(args):
 			i += 1
 			opts.clock = args[i]
