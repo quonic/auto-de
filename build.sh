@@ -35,6 +35,7 @@ build() {
 test() {
 	"$ODIN" test tests/wl "${FLAGS[@]}"
 	tests/run_integration.sh
+	python3 -I tests/mcp_smoke.py
 }
 
 case "${1:-build}" in

@@ -16,6 +16,8 @@ USAGE :: `usage:
   autode ctl [--socket PATH] [--out FILE] <method> [{json params} | key=value ...]
       Send one control request and print the JSON response.
       --out FILE writes a screenshot's PNG to FILE instead of printing base64.
+  autode mcp [--attach CTL_SOCKET] [--size WxH] [--config FILE] [--clock HH:MM] [--isolate-home]
+      MCP server on stdio for AI agents. Starts its own headless session unless --attach is given.
 `
 
 main :: proc() {
@@ -29,6 +31,8 @@ main :: proc() {
 		os.exit(cmd_run(args[1:]))
 	case "ctl":
 		os.exit(cmd_ctl(args[1:]))
+	case "mcp":
+		os.exit(cmd_mcp(args[1:]))
 	case "-h", "--help", "help":
 		fmt.print(USAGE)
 	case:
