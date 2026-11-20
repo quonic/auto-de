@@ -130,4 +130,4 @@ you expected, say so. Do not report it as a success. To compare reproducible scr
 `--clock`, the same `--size` and the same launch order. Window placement and font rendering are
 deterministic.
 
-Full method and parameter list: the "Control methods" table in `README.md`.
+Full method and parameter list, with replies, element ids and key names: `docs/CONTROL.md`.

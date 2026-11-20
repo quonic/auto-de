@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Guidance for coding agents working on this repository. Read [README.md](README.md) for what the
-tool does, [docs/PLAN.md](docs/PLAN.md) for the architecture and design decisions, and
-[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for app support and known limitations.
+tool does, [docs/USAGE.md](docs/USAGE.md) for how it is used, [docs/CONTROL.md](docs/CONTROL.md)
+for every control method, [docs/PLAN.md](docs/PLAN.md) for the architecture and design
+decisions, and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for app support and known
+limitations.
 
 ## What this is
 
@@ -65,6 +67,8 @@ Linux only.
 | `src/server/` | Compositor, desktop and automation, in **one package** on purpose (Odin forbids import cycles) |
 | `tools/scanner/` | Protocol XML to Odin generator |
 | `tools/fontgen.py` | BDF to `src/render/font_data.odin` (already generated; run it only to change the font) |
+| `tools/readme_images.sh` | Regenerates `docs/images/` (README screenshots and demo GIF) with real apps |
+| `docs/` | Usage guide, control API reference, compatibility, design plan |
 | `protocols/` | Vendored protocol XMLs |
 | `assets/keymap_us.xkb` | Static US keymap, sent to clients through a memfd |
 | `tests/wl`, `tests/render`, `tests/server` | `odin test` unit tests |
@@ -87,7 +91,8 @@ wl_shm), `xdg.odin` (xdg-shell), `wm.odin` (window management, compositing), `sh
    `reply_ok` or `reply_error`. Allocate per-request data from `context.temp_allocator`.
 2. If agents need it, add or update the entry in `TOOLS` in `src/mcp.odin`. Keep the JSON
    schema and description accurate, because the agent sees only those.
-3. Update the "Control methods" table in `README.md` (and the MCP tool list there).
+3. Update [docs/CONTROL.md](docs/CONTROL.md): the method table, and the "MCP tools" table for a
+   new MCP tool. Update [docs/USAGE.md](docs/USAGE.md) if the workflow changes.
 4. Add a test to `tests/run_integration.sh`, and to `tests/mcp_smoke.py` for a new MCP tool.
 
 **Add a Wayland protocol**
@@ -96,8 +101,8 @@ wl_shm), `xdg.odin` (xdg-shell), `wm.odin` (window management, compositing), `sh
 3. Commit the generated `src/wl/proto_*.odin` files with the change.
 
 **Add a desktop UI element**: add it in `shell_layout` (`src/server/shell.odin`) with a stable
-id. Agents and scripts depend on element ids (`taskbar.start`, `window.<id>.close`, ...), so do
-not rename existing ids.
+id, and add the id to "Element ids" in [docs/CONTROL.md](docs/CONTROL.md). Agents and scripts
+depend on element ids (`taskbar.start`, `window.<id>.close`, ...), so do not rename existing ids.
 
 ## Style
 
